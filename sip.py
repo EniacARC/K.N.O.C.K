@@ -1,7 +1,7 @@
 import re
 
-PATTERN_REQUEST = r'^[A-Z]+\ssip:[^ ]+SIP/\d\.\d\r\n'
-PATTERN_RESPONSE = r'^SIP\d\.\d\s\d+\s[A-Za-z]+'
+PATTERN_REQUEST = r'^[A-Z]+\ssip:.+\sSIP/\d\.\d'
+PATTERN_RESPONSE = r'^SIP/\d\.\d\s\d+\s[A-Za-z]+'
 
 
 # class SIPMsg    :
@@ -56,14 +56,14 @@ class SIPMsg:
         if not lines:
             raise ValueError("Empty SIP message")
         metadata, body = lines
-        metadata = metadata.split("\r\n")
+        metadata = metadata.split("\r\n", 1)
         if not metadata:
             raise ValueError("Empty SIP message")
 
         # Parse the first line (start line)
         start_line = metadata[0]
         self._parse_start_line(start_line)
-        self._parse_headers(metadata[1:])
+        self._parse_headers(metadata[1])
 
     def build_start_line(self, start_line):
         pass
@@ -104,11 +104,11 @@ class SIPResponse(SIPMsg):
         if msg:
             self.parse_msg(msg)
 
-    def can_parse(self, msg):
+    def _can_parse(self, msg):
         return bool(re.match(PATTERN_RESPONSE, msg))
 
     def _parse_start_line(self, start_line):
-        if self.can_parse(start_line):
+        if self._can_parse(start_line):
             args = start_line.split(' ', 1)
             self.version = args[0]
             self.status_code = args[1]
@@ -128,11 +128,11 @@ class SIPRequest(SIPMsg):
         if msg:
             self.parse_msg(msg)
 
-    def can_parse_msg(self, msg):
+    def _can_parse_msg(self, msg):
         return bool(re.match(PATTERN_REQUEST, msg))
 
-    def parse_start_line(self, start_line):
-        if self.can_parse_msg(start_line):
+    def _parse_start_line(self, start_line):
+        if self._can_parse_msg(start_line):
             args = start_line.split(' ')
             self.method = args[0]
             self.uri = args[1]
@@ -142,3 +142,53 @@ class SIPRequest(SIPMsg):
         if not self.method or self.uri:
             raise ValueError("error! missing params to build request")
         return f"{self.method} {self.uri} {self.version}"
+
+
+class SIPMsgFactory:
+    @staticmethod
+    def parse(is_response, msg):
+        if is_response:
+            return SIPResponse(None, None, msg)
+        else:
+            return SIPRequest(None, None, None, msg)
+
+
+raw_invite = """REGISTER sip:10.10.1.99 SIP/2.0\r
+CSeq: 2 REGISTER\r
+Via: SIP/2.0/UDP 10.10.1.13:5060;
+ branch=z9hG4bK32366531-99e1-de11-8845-080027608325;rport\r
+User-Agent: MySipClient/4.0.0\r
+Authorization: Digest username="test13", realm="mypbx",
+nonce="343eb793", uri="sip:10.10.1.99", algorithm=MD5, 
+ response="6c13de87f9cde9c44e95edbb68cbdea9"\r
+From: <sip:13@10.10.1.99>;
+ tag=d60e6131-99e1-de11-8845-080027608325\r
+Call-ID: e4ec6031-99e1\r
+To: <sip:13@10.10.1.99>\r
+Contact: <sip:13@10.10.1.13>;q=1\r
+Allow: INVITE,ACK,OPTIONS,BYE,CANCEL,SUBSCRIBE,NOTIFY,REFER,
+ MESSAGE,INFO,PING\r
+Expires: 3600\r
+Content-Length: 0\r
+Max-Forwards: 70\r
+Expires: 3600\r
+\r\n"""
+msg1 = SIPMsgFactory.parse(False, raw_invite)
+# print(msg1.headers)
+# print(msg1.method)
+
+raw_res = """SIP/2.0 200 OK\r
+Via: SIP/2.0/UDP site4.server2.com;branch=z9hG4bKnashds8;received=192.0.2.3\r
+Via: SIP/2.0/UDP site3.server1.com;branch=z9hG4bK77ef4c2312983.1;received=192.0.2.2\r
+Via: SIP/2.0/UDP pc33.server1.com;branch=z9hG4bK776asdhds;received=192.0.2.1\r
+To: user2 <sip:user2@server2.com>;tag=a6c85cf\r
+From: user1 <sip:user1@server1.com>;tag=1928301774\r
+Call-ID: a84b4c76e66710@pc33.server1.com\r
+CSeq: 314159 INVITE\r
+Contact: <sip:user2@192.0.2.4>\r
+Content-Type: application/sdp\r
+Content-Length: 131\r
+\r\n"""
+msg2 = SIPMsgFactory.parse(True, raw_res)
+print(msg2.headers)
+print(msg2.status_code)
