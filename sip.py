@@ -44,29 +44,69 @@ class SIPMsg:
         self.headers = {}
         self.body = ""
 
+    @staticmethod
+    def get_cseq(inp):
+        match = re.match(r"^\d+", inp)
+        return int(match.group())
     def _parse_start_line(self, start_line):
+        pass
+
+    def _can_parse_start_line(self, start_line):
+        pass
+
+    def build_start_line(self, start_line):
         pass
 
     def _parse_headers(self, headers_raw):
         self.headers = {key: value for key, value in (x.split(": ") for x in headers_raw.split("\r\n"))}
 
+    def _can_parse_headers(self, headers):
+        for line in headers:
+            split_line = line.split(':')
+            if not split_line or len(split_line) != 2:
+                return False
+
+    def can_parse(self, msg):
+        """
+        Check if a string is a valid SIP message.
+        Validates different requirements for requests vs responses.
+
+        Args:
+            msg (str): The raw SIP message to validate
+
+        Returns:
+            tuple: (bool, str) - (is_valid, error_message)
+        """
+        if not msg:
+            return False
+
+        # Check if message has proper line endings
+        if "\r\n\r\n" not in msg:
+            return False
+
+        # Split headers and body
+        headers_part, body_part = msg.split("\r\n\r\n", 1)
+
+        # Split into lines and get start line
+        lines = headers_part.split("\r\n")
+        if not lines:
+            return False
+
+        # Check if it's a request or response
+        return self._can_parse_start_line(lines[0]) and self._can_parse_headers(lines[1:])
+
     def parse_msg(self, raw_msg):
+        if not self.can_parse(raw_msg):
+            print("error!")
+            return None
         # Split the message into lines
         lines = raw_msg.split("\r\n\r\n")
-        if not lines:
-            raise ValueError("Empty SIP message")
         metadata, body = lines
         metadata = metadata.split("\r\n", 1)
-        if not metadata:
-            raise ValueError("Empty SIP message")
-
         # Parse the first line (start line)
         start_line = metadata[0]
         self._parse_start_line(start_line)
         self._parse_headers(metadata[1])
-
-    def build_start_line(self, start_line):
-        pass
 
     def set_header(self, key, value):
         self.headers[key] = value
@@ -104,14 +144,13 @@ class SIPResponse(SIPMsg):
         if msg:
             self.parse_msg(msg)
 
-    def _can_parse(self, msg):
+    def _can_parse_start_line(self, msg):
         return bool(re.match(PATTERN_RESPONSE, msg))
 
     def _parse_start_line(self, start_line):
-        if self._can_parse(start_line):
-            args = start_line.split(' ', 1)
-            self.version = args[0]
-            self.status_code = args[1]
+        args = start_line.split(' ', 1)
+        self.version = args[0]
+        self.status_code = args[1]
 
     def build_start_line(self, start_line):
         if not self.status_code:
@@ -128,15 +167,14 @@ class SIPRequest(SIPMsg):
         if msg:
             self.parse_msg(msg)
 
-    def _can_parse_msg(self, msg):
+    def _can_parse_start_line(self, msg):
         return bool(re.match(PATTERN_REQUEST, msg))
 
     def _parse_start_line(self, start_line):
-        if self._can_parse_msg(start_line):
-            args = start_line.split(' ')
-            self.method = args[0]
-            self.uri = args[1]
-            self.version = args[2]
+        args = start_line.split(' ')
+        self.method = args[0]
+        self.uri = args[1]
+        self.version = args[2]
 
     def build_start_line(self, start_line):
         if not self.method or self.uri:
