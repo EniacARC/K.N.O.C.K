@@ -76,7 +76,7 @@ REQUIRED_HEADERS = ('to', 'from', 'call-id', 'cseq', 'content-length')
 class SIPMsg(ABC):
     def __init__(self):
         self.version = None
-        self.headers = {}
+        self.headers = {}  # {'to': '', 'from': '', 'call-id': '', 'cseq': (0, ''), 'content-length': 0}
         self.body = None
 
     @abstractmethod
@@ -89,6 +89,10 @@ class SIPMsg(ABC):
 
     @abstractmethod
     def _build_start_line(self):
+        pass
+
+    @abstractmethod
+    def can_build(self):
         pass
 
     @staticmethod
@@ -140,6 +144,8 @@ class SIPMsg(ABC):
             return False
 
     def __str__(self):
+        if not self.can_build():
+            return ""
         msg = self._build_start_line()
         self._build_headers()
         for key, value in self.headers:
@@ -181,6 +187,12 @@ class SIPRequest(SIPMsg):
             return f"{self.method} sip:{self.uri} {self.version}"
         return ""
 
+    def can_build(self):
+        if not self.method or not self.version or not self.uri:
+            return False
+        if not set(self.headers.keys()).issubset(REQUIRED_HEADERS):
+            return False
+
 
 class SIPResponse(SIPMsg):
     def __init__(self):
@@ -200,6 +212,12 @@ class SIPResponse(SIPMsg):
             return f"{self.version} {self.status_code[0]} {self.status_code[1]}"
         return ""
 
+    def can_build(self):
+        if not self.status_code or not self.version:
+            return False
+        if not set(self.headers.keys()).issubset(REQUIRED_HEADERS):
+            return False
+
 
 class SIPMsgFactory:
     @staticmethod
@@ -209,7 +227,50 @@ class SIPMsgFactory:
             if req_object.parse(raw_msg):
                 return req_object
             return None
+        else:
+            res_object = SIPResponse()
+            if res_object.parse(raw_msg):
+                return res_object
+            return None
 
+    @staticmethod
+    def create_request(self, method, version, to_uri, from_uri, call_id, cseq, additional_headers=None, body=None):
+        req_object = SIPRequest()
+        req_object.method = method
+        req_object.uri = to_uri
+        req_object.version = version
+
+        req_object.set_header('to', to_uri)
+        req_object.set_header('from', from_uri)
+        req_object.set_header('call-id', call_id)
+        req_object.set_header('cseq', cseq)
+        if additional_headers:
+            for key, value in additional_headers:
+                req_object.set_header(key, value)
+        if body:
+            req_object.set_body(body)
+        else:
+            # default content-length value if not body
+            req_object.set_header('content-length', 0)
+
+    @staticmethod
+    def create_response(request, status_code, additional_headers=None):
+        res_object = SIPResponse()
+        res_object.status_code = status_code
+        if additional_headers:
+            for key, value in additional_headers:
+                res_object.set_header(key, value)
+
+        res_object.version = request.version
+        res_object.set_header('to', request.headers['to'])
+        res_object.set_header('from', request.headers['from'])
+        res_object.set_header('call-id', request.headers['call-id'])
+        res_object.set_header('cseq', request.headers['cseq'])
+        if request.body:
+            res_object.set_body(request.body)
+        else:
+            # default content-length value if not body
+            res_object.set_header('content-length', 0)
 
 
 """
@@ -219,7 +280,7 @@ properties:
     - version: version of the sip msg
     - headers - dict of the headers {str: str} *must include required headers
     - body - the msg body
-    
+
 functions:
     can_parse(msg:str) - check if string representing sip follows requirements:
         start_line valid (diffs on req/res), headers valid + required present, CLRF, body(optional)
@@ -227,7 +288,7 @@ functions:
             strip_essential_headers: strip all unneccery info from the required headers
     header manipulations - add/set, remove, get
     __str__ - convert into str
-    
+
 functions_abstract:
     start_line - can_parse, parse and build
 """
@@ -238,7 +299,7 @@ SIPRequest : SIPMsg
 properties:
     - method: the method of the request (enum)
     - uri: the uri of the request
-    
+
 functions:
     start_line - can_parse, parse, build, 
             proces_uri - strip info from uri 
@@ -261,7 +322,7 @@ SIPMsgFactory
 functions:
     parse - takes string and invokes parse of SIPrequest or SIPResponse according to type
         identify_msg_type - return if string is req or res
-        
+
     create_request - takes params and builds request: method, version, to_uri, from_uri, call-id, cseq, additional_headers, body
     build_response_from_request - take params and builds request object based on the response: 
     request object, status_code, extra_headers
