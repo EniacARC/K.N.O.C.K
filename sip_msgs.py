@@ -164,6 +164,11 @@ class SIPMsg(ABC):
         if key in self.headers:
             del self.headers[key]
 
+    def get_header(self, key):
+        if key in self.headers:
+            return self.headers[key]
+        return None
+
     def set_body(self, body):
         self.body = body
         self.headers['content-length'] = len(body)
