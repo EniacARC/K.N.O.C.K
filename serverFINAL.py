@@ -21,5 +21,180 @@ AUTH:
 you send auth challenge. the uac send a NEW request back with auth (including all params needed to calculate).
 the server saves ha1 not plaintext.
 
+auth using DIGEST ------ maybe switch to kerberos??? (talk about it)
+
 I have a call class
+
+
+for keep_alive use OPTIONS
+send every 10 seconds. every time i receive add to a list. if not on the list remove
 """
+import concurrent.futures
+
+import sip_msgs
+from sip_msgs import *
+import socket
+import datetime
+import threading
+import time
+from dataclasses import dataclass
+from enum import Enum
+
+from comms import *
+
+import select
+
+DEFAULT_SERVER_PORT = 5040
+MAX_WORKERS = 10
+SIP_VERSION = "SIP/2.0"
+KEEP_ALIVE_LIMIT = 60 * 5
+KEEP_ALIVE_MSG = str(
+    SIPMsgFactory.create_request(sip_msgs.SIPMethod.OPTIONS, SIP_VERSION, "keep-alive", "keep-alive",
+                                 "", ""))
+
+
+@dataclass
+class RegisteredUser:
+    """ struct for registered user"""
+    uri: str
+    address: (str, int)
+    socket: socket.socket
+    registration_time: datetime.time
+    expires: int  # amnt of sec
+
+
+@dataclass
+class Call:
+    call_id: str
+    caller_uri: str
+    callee_uri: str
+    start_time: datetime.datetime
+
+
+# non-optimal lookup
+# @dataclass
+# class Socket:
+#     sock: socket.socket
+#     creation_time: datetime.time
+
+
+class SIPServer:
+    def __init__(self, port=DEFAULT_SERVER_PORT):
+        # socket props
+        self.host = '0.0.0.0'
+        self.port = port
+        self.server_socket = None
+        self.running = False
+        self.queue_len = 5
+
+        # thread pool props
+        self.thread_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=MAX_WORKERS,
+            thread_name_prefix="sip_worker"
+        )
+
+        # locks - rlock for multiple aqrs in the same thread
+        self.reg_lock = threading.RLock()  # lock for adding users to the registered_users dict
+        self.call_lock = threading.RLock()  # lock for adding users to the active_calls dict
+        self.conn_lock = threading.RLock()
+
+        # user management props
+        # self.socket_to_uri = {} # maybe add in the future
+        self.registered_users = {}  # uri: str -> RegisteredUser - people you can call to
+        self.active_calls = {}  # call-id: str -> Call
+
+        # maybe switch to socket -> socket heartbeat object(?)
+        self.connected_users = []  # sockets
+        self.kept_alive_round = []
+
+        # add auth object
+
+    def start(self):
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            self.running = True
+            self.server_socket.bind((self.host, self.port))
+            self.server_socket.listen(self.queue_len)
+
+            # clean any expired regs or inactive users
+            cleanup_thread = threading.Thread(target=self._cleanup_expired_reg, daemon=True)
+            keepalive_thread = threading.Thread(target=self._keep_alive, daemon=True)
+            cleanup_thread.start()
+            keepalive_thread.start()
+
+            # start server loop
+            while self.running:
+                with self.conn_lock:
+                    readable, _, _ = select.select(self.connected_users + [self.server_socket], [], [],
+                                                   0.5)
+                for sock in readable:
+                    if sock is self.server_socket:
+                        # incoming connection
+                        client_sock, addr = self.server_socket.accept()
+                        with self.conn_lock:
+                            self.connected_users.append(sock)
+                            self.kept_alive_round.append(sock)
+                    else:
+                        msg = receive_tcp(sock)
+                        if msg:
+                            self.thread_pool.submit(self._worker_process_msg, sock, msg)
+                        else:
+                            self._close_connection(sock)
+        except socket.error as err:
+            print(err + "something went wrong!")
+            # stop func
+        finally:
+            self.running = False
+            with self.conn_lock:
+                while self.connected_users:
+                    self.connected_users.pop().close()
+            self.server_socket.close()
+
+    def _worker_process_msg(self, sock, msg):
+        pass
+
+    def _cleanup_expired_reg(self):
+        """removes registrations that are past expiration"""
+        with self.reg_lock:
+            for uri, user in self.registered_users:
+                if (datetime.datetime.now() - user.registration_time) >= user.expires:
+                    del self.registered_users[uri]
+        time.sleep(60)
+
+    def _keep_alive(self):
+        """send heartbeats. if socket didn't respond to the last heartbeat then he is inactive """
+        with self.conn_lock:
+            for sock, _ in self.connected_users:
+                if sock in self.kept_alive_round:
+                    send_tcp(sock, KEEP_ALIVE_MSG.encode())
+                    self.kept_alive_round.remove(sock)
+                else:
+                    self._close_connection(sock)
+        time.sleep(10)
+
+    def _close_connection(self, sock):
+        """remove user from both active_users and registered_users when applicable"""
+        with self.conn_lock:
+            if sock in self.connected_users:
+                self.connected_users.remove(sock)
+            if sock in self.kept_alive_round:
+                self.kept_alive_round.remove(sock)
+        with self.reg_lock:
+            for uri, user in self.registered_users:
+                # O(n) lookup not efficient. what's the point of creating sock->time if O(n) lookup anyway?
+                if user.socket == sock:
+                    del self.registered_users[uri]
+
+# close
+# # Close all active connections
+# with self.conn_lock:
+#     for conn in list(self.active_connections):
+#         try:
+#             conn.close()
+#         except:
+#             pass
+#     self.active_connections.clear()
+#
+# # Close server socket
+# if self.server_socket:
+#     self.server_socket.close()
