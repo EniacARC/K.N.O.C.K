@@ -18,6 +18,16 @@ class SIPMethod(Enum):
     OPTIONS = "OPTIONS"
 
 
+class SIPCallState(Enum):
+    ESTABLISHED = "ESTABLISHED"
+    IN_PROGRESS = "IN PROGRESS"
+
+
+class SIPCallType(Enum):
+    REGISTER = 'REGISTER'
+    INVITE = 'INVITE'
+
+
 class SIPStatusCode(Enum):
     # 1xx - Informational
     TRYING = (100, "Trying")
@@ -295,7 +305,20 @@ class SIPMsgFactory:
         else:
             # default content-length value if not body
             res_object.set_header('content-length', 0)
+    @staticmethod
+    def create_response(status_code, version, method, to_uri, from_uri, call_id, additional_headers=None):
+        res_object = SIPResponse()
+        res_object.status_code = status_code
+        if additional_headers:
+            for key, value in additional_headers:
+                res_object.set_header(key, value)
 
+        res_object.version = version.version
+        res_object.set_header('to', to_uri)
+        res_object.set_header('from', from_uri)
+        res_object.set_header('call-id', call_id)
+        res_object.set_header('cseq', '1' + ' ' + method)
+        res_object.set_header('content-length', 0) # assume this is for errors. no body needed
 
 """
 SipMsg

@@ -47,7 +47,9 @@ import select
 DEFAULT_SERVER_PORT = 5040
 MAX_WORKERS = 10
 SIP_VERSION = "SIP/2.0"
+SERVER_URI = "myserver"
 KEEP_ALIVE_LIMIT = 60 * 5
+CALL_IDLE_LIMIT = 15
 KEEP_ALIVE_MSG = SIPMsgFactory.create_request(sip_msgs.SIPMethod.OPTIONS, SIP_VERSION, "keep-alive", "keep-alive",
                                               "", "1")
 
@@ -62,14 +64,17 @@ class RegisteredUser:
     expires: int  # amnt of sec
 
 
+# dataclasses for storing session info for each msg type
 @dataclass
-class Call:
+class Call: # for both invite and register
+    call_type: SIPCallType
     call_id: str
-    caller_uri: str
-    callee_uri: str
-    call_state: str
+    uri: str # either caller or callee depending on call type
+    callee_socket: socket.socket
+    caller_socket = socket.socket
+    call_state: SIPCallState
     last_used_cseq_num: int
-    start_time: datetime.datetime
+    last_active: datetime.datetime
 
 
 @dataclass
@@ -86,37 +91,46 @@ class KeepAlive:
 #     sock: socket.socket
 #     creation_time: datetime.time
 
-class RegistrationMap:
-    def __init__(self):
-        self.uri_to_user = {}
-        self.socket_to_uri = {}
+class BiMap:
+    def __init__(self, key_attr: str, value_attr: str):
+        """
+        Initialize a bidirectional map using attributes from stored objects.
 
-    def add(self, user):
-        """user = RegisteredUser instance"""
-        self.uri_to_user[user.uri] = user
-        self.socket_to_uri[user.socket] = user.uri
+        :param key_attr: Attribute name to use as key in the first map (e.g., 'socket')
+        :param value_attr: Attribute name to use as key in the second map (e.g., 'uri')
+        """
+        self.key_to_val = {}  # e.g., socket -> uri
+        self.val_to_obj = {}  # e.g., uri -> full object
+        self.key_attr = key_attr
+        self.value_attr = value_attr
 
-    def remove_by_socket(self, sock):
-        if sock in self.socket_to_uri:
-            uri = self.socket_to_uri[sock]
-            del self.socket_to_uri[sock]
-            del self.uri_to_user[uri]
+    def add(self, obj):
+        key = getattr(obj, self.key_attr)
+        val = getattr(obj, self.value_attr)
+        self.key_to_val[key] = val
+        self.val_to_obj[val] = obj
+
+    def remove_by_key(self, key):
+        if key in self.key_to_val:
+            val = self.key_to_val.pop(key)
+            self.val_to_obj.pop(val, None)
             return True
         return False
 
-    def remove_by_uri(self, uri):
-        if uri in self.uri_to_user:
-            user = self.socket_to_uri[uri]
-            del self.socket_to_uri[user.socket]
-            del self.uri_to_user[uri]
+    def remove_by_val(self, val):
+        if val in self.val_to_obj:
+            obj = self.val_to_obj.pop(val)
+            key = getattr(obj, self.key_attr)
+            self.key_to_val.pop(key, None)
             return True
         return False
 
-    def get_user(self, uri):
-        return self.uri_to_user[uri] if uri in self.uri_to_user else None
+    def get_by_val(self, val):
+        return self.val_to_obj.get(val)
 
-    def get_uri(self, sock):
-        return self.socket_to_uri[sock] if sock in self.socket_to_uri else None
+    def get_by_key(self, key):
+        val = self.key_to_val.get(key)
+        return self.val_to_obj.get(val) if val else None
 
 
 class SIPServer:
@@ -141,10 +155,10 @@ class SIPServer:
 
         # user management props
         # self.socket_to_uri = {} # maybe add in the future
-        self.registered_user = RegistrationMap()
+        self.registered_user = BiMap(key_attr="socket", value_attr="uri")
 
-        self.active_calls = {}  # call-id: str -> Call
-
+        self.active_calls = BiMap(key_attr="socket", value_attr="call_id")
+        
         # maybe switch to socket -> socket heartbeat object(?)
         self.connected_users = []  # sockets
         self.pending_keep_alive = {}  # call-id -> KeepAlive
@@ -174,6 +188,8 @@ class SIPServer:
                     if sock is self.server_socket:
                         # incoming connection
                         client_sock, addr = self.server_socket.accept()
+                        # check if ip blacklisted
+                        # add addr to table. if too many entries in a short amount of time then DOS block IP.
                         with self.conn_lock:
                             self.connected_users.append(client_sock)
                             # self.kept_alive_round.append(client_sock)
@@ -211,11 +227,11 @@ class SIPServer:
                             self.active_calls[sip_msg.get_header('call-id')].last_used_cseq_num += 1
         else:
             if isinstance(sip_msg, SIPRequest):
-                self.process_request(sip_msg)
+                self.process_request(sock, sip_msg)
             else:
-                self.process_request(sip_msg)
+                self.process_request(sock, sip_msg)
 
-    def process_request(self, req):
+    def process_request(self, sock, req):
         method = req.method
         if method == SIPMethod.REGISTER:
             pass  # handle register
@@ -226,12 +242,21 @@ class SIPServer:
         elif method == SIPMethod.BYE:
             pass  # handle BYE
 
-    def register_request(self, req):
+    def register_request(self, sock, req):
+        # doesn't check if the two requests are equal
+        # uri = req.get_header("from")
+        # with self.reg_lock:
+        #     if self.registered_user.get_user(uri):
+        #         error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_ACCEPTABLE)
+        #         send_tcp(sock, str(error_msg).encode())
         pass
+
+
+    def invite_request(self):
 
     # -----------------------------------------------------
 
-    def process_response(self, res):
+    def process_response(self, sock, res):
         call_id = res.get_header('call-id')
         if call_id in self.pending_keep_alive:
             with self.conn_lock:
@@ -247,11 +272,18 @@ class SIPServer:
     def _cleanup_expired_reg(self):
         """removes registrations that are past expiration"""
         with self.reg_lock:
-            for uri, user in self.registered_user.uri_to_user:
+            for uri, user in self.registered_user.val_to_obj:
                 if (datetime.datetime.now() - user.registration_time) >= user.expires:
-                    self.registered_user.remove_by_uri(uri)
-        time.sleep(60)
-
+                    self.registered_user.remove_by_val(uri)
+        time.sleep(30)
+        
+    def _cleanup_inactive_calls(self):
+        """removes calls with sockets that """
+        with self.call_lock:
+            for call_id, call in self.active_calls.val_to_obj:
+                if (datetime.datetime.now() - call.last_active) >= CALL_IDLE_LIMIT:
+                    self.active_calls.remove_by_val(call_id)
+        time.sleep(30)
     def _keep_alive(self):
         while self.running:
             """send heartbeats. if socket didn't respond to the last heartbeat then he is inactive """
@@ -281,7 +313,23 @@ class SIPServer:
                 self.connected_users.remove(sock)
                 # pending_keep_alive entry would be removed by the _keep_alive func
         with self.reg_lock:
-            self.registered_user.remove_by_socket(sock)
+            self.registered_user.remove_by_key(sock)
+        with self.conn_lock:
+            # remove a call that the sock is in. if there is another uac send them an error msg
+            call = self.active_calls.get_by_key(sock)
+            if call:
+                call_obj = self.active_calls.get_by_val(call)
+                if call_obj.call_type is SIPCallType.INVITE:
+                    # if invite the other side deserves a msg
+                    send_sock = call_obj.caller_socket if call.callee_socket == sock else call.callee_socket
+                    to_uri, _ = send_sock.getpeername()
+                    with self.reg_lock:
+                        if self.registered_user.get_by_key(send_sock):
+                            to_uri = self.registered_user.get_by_key(send_sock)
+                    end_msg = SIPMsgFactory.create_response(SIPStatusCode.NOT_FOUND, SIP_VERSION, SIPMethod.INVITE, to_uri, SERVER_URI, call)
+                    self.active_calls.remove_by_key(sock)  # if one of the sockets is removed the call ends
+                    if not send_tcp(send_sock, str(end_msg).encode()):
+                        self._close_connection(send_sock)
         sock.close()
 
 # close
