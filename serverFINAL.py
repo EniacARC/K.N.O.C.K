@@ -48,9 +48,8 @@ DEFAULT_SERVER_PORT = 5040
 MAX_WORKERS = 10
 SIP_VERSION = "SIP/2.0"
 KEEP_ALIVE_LIMIT = 60 * 5
-KEEP_ALIVE_MSG = str(
-    SIPMsgFactory.create_request(sip_msgs.SIPMethod.OPTIONS, SIP_VERSION, "keep-alive", "keep-alive",
-                                 "", ""))
+KEEP_ALIVE_MSG = SIPMsgFactory.create_request(sip_msgs.SIPMethod.OPTIONS, SIP_VERSION, "keep-alive", "keep-alive",
+                                              "", "1")
 
 
 @dataclass
@@ -65,11 +64,19 @@ class RegisteredUser:
 
 @dataclass
 class Call:
-    call_type: SIPMethod
     call_id: str
     caller_uri: str
     callee_uri: str
+    call_state: str
+    last_used_cseq_num: int
     start_time: datetime.datetime
+
+
+@dataclass
+class KeepAlive:
+    call_id: str
+    last_used_cseq_num: int
+    client_socket: socket.socket
 
 
 # non-optimal lookup
@@ -139,7 +146,8 @@ class SIPServer:
 
         # maybe switch to socket -> socket heartbeat object(?)
         self.connected_users = []  # sockets
-        self.kept_alive_round = []
+        self.pending_keep_alive = {}  # call-id -> KeepAlive
+        # self.kept_alive_round = []
 
         # add auth object
 
@@ -167,7 +175,7 @@ class SIPServer:
                         client_sock, addr = self.server_socket.accept()
                         with self.conn_lock:
                             self.connected_users.append(client_sock)
-                            self.kept_alive_round.append(client_sock)
+                            # self.kept_alive_round.append(client_sock)
                     else:
                         msg = receive_tcp(sock)
                         if msg:
@@ -204,10 +212,6 @@ class SIPServer:
             pass  # handle ack end of invite - start rtp
         elif method == SIPMethod.BYE:
             pass  # handle BYE
-        elif method == SIPMethod.OPTIONS:
-            # connected user responded to heartbeat msg
-            with self.conn_lock:
-                self.kept_alive_round.append(sock)
 
     def process_response(self, res):
         pass
@@ -224,12 +228,22 @@ class SIPServer:
         while self.running:
             """send heartbeats. if socket didn't respond to the last heartbeat then he is inactive """
             with self.conn_lock:
+                for call_id, keep_alive in self.pending_keep_alive:
+                    # socket should be in connected users. check for safety
+                    if keep_alive.client_socket in self.connected_users:
+                        del self.pending_keep_alive[call_id]
+                        self._close_connection(keep_alive.client_socket)
+                # everyone that remained has answered teh keep alive
                 for sock, _ in self.connected_users:
-                    if sock in self.kept_alive_round:
-                        send_tcp(sock, KEEP_ALIVE_MSG.encode())
-                        self.kept_alive_round.remove(sock)
-                    else:
+                    msg = KEEP_ALIVE_MSG
+                    call_id = generate_random_call_id()
+                    msg.set_header('call-id', call_id)
+
+                    if not send_tcp(sock, str(msg).encode()):
                         self._close_connection(sock)
+                        continue
+                    keep_alive_obj = KeepAlive(call_id, 1, sock)
+                    self.pending_keep_alive[call_id] = keep_alive_obj
             time.sleep(10)
 
     def _close_connection(self, sock):
@@ -237,8 +251,7 @@ class SIPServer:
         with self.conn_lock:
             if sock in self.connected_users:
                 self.connected_users.remove(sock)
-            if sock in self.kept_alive_round:
-                self.kept_alive_round.remove(sock)
+                # pending_keep_alive entry would be removed by the _keep_alive func
         with self.reg_lock:
             self.registered_user.remove_by_socket(sock)
         sock.close()

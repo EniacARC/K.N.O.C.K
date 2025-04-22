@@ -1,4 +1,6 @@
+import random
 import re
+import string
 from enum import Enum
 from abc import ABC, abstractmethod
 
@@ -13,6 +15,7 @@ class SIPMethod(Enum):
     INVITE = "INVITE"
     ACK = "ACK"
     BYE = "BYE"
+    OPTIONS = "OPTIONS"
 
 
 class SIPStatusCode(Enum):
@@ -73,6 +76,10 @@ REQUIRED_HEADERS = ('to', 'from', 'call-id', 'cseq', 'content-length')
 # cseq - identifies each msg, incremints by uac only
 # content-length - length of body
 
+def generate_random_call_id():
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
+
+
 class SIPMsg(ABC):
     def __init__(self):
         self.version = None
@@ -117,7 +124,7 @@ class SIPMsg(ABC):
 
         # transform "num METHOD" to (int(num), METHOD)
         self.headers['cseq'] = self.headers['cseq'].split()
-        self.headers['sceq'][0] = int(self.headers['sceq'][0])
+        self.headers['cseq'][0] = int(self.headers['sceq'][0])
 
         self.headers['content-length'] = int(self.headers['content-length'])
 
@@ -239,7 +246,7 @@ class SIPMsgFactory:
             return None
 
     @staticmethod
-    def create_request(self, method, version, to_uri, from_uri, call_id, cseq, additional_headers=None, body=None):
+    def create_request(method, version, to_uri, from_uri, call_id, cseq, additional_headers=None, body=None):
         req_object = SIPRequest()
         req_object.method = method
         req_object.uri = to_uri
@@ -248,7 +255,7 @@ class SIPMsgFactory:
         req_object.set_header('to', to_uri)
         req_object.set_header('from', from_uri)
         req_object.set_header('call-id', call_id)
-        req_object.set_header('cseq', cseq)
+        req_object.set_header('cseq', cseq + ' ' + method)
         if additional_headers:
             for key, value in additional_headers:
                 req_object.set_header(key, value)
@@ -259,7 +266,7 @@ class SIPMsgFactory:
             req_object.set_header('content-length', 0)
 
     @staticmethod
-    def create_response(request, status_code, additional_headers=None):
+    def create_response_from_request(request, status_code, additional_headers=None):
         res_object = SIPResponse()
         res_object.status_code = status_code
         if additional_headers:
@@ -270,7 +277,7 @@ class SIPMsgFactory:
         res_object.set_header('to', request.headers['to'])
         res_object.set_header('from', request.headers['from'])
         res_object.set_header('call-id', request.headers['call-id'])
-        res_object.set_header('cseq', request.headers['cseq'])
+        res_object.set_header('cseq', request.headers['cseq'] + ' ' + request.method)
         if request.body:
             res_object.set_body(request.body)
         else:
