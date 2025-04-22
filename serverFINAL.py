@@ -74,6 +74,7 @@ class Call:
 
 @dataclass
 class KeepAlive:
+    # kept alive is for connection - not for registered uacs, so it's socket context
     call_id: str
     last_used_cseq_num: int
     client_socket: socket.socket
@@ -198,11 +199,11 @@ class SIPServer:
             print("error! invalid sip msg - cannot respond")
             return
         if isinstance(sip_msg, SIPRequest):
-            self.process_request(sock, sip_msg)
+            self.process_request(sip_msg)
         else:
-            self.process_request(sock, sip_msg)
+            self.process_request(sip_msg)
 
-    def process_request(self, sock, req):
+    def process_request(self, req):
         method = req.method
         if method == SIPMethod.REGISTER:
             pass  # handle register
@@ -214,7 +215,17 @@ class SIPServer:
             pass  # handle BYE
 
     def process_response(self, res):
-        pass
+        call_id = res.get_header('call-id')
+        if call_id in self.pending_keep_alive:
+            with self.conn_lock:
+                # the response is to a keep alive
+                if res.status_code is SIPStatusCode.OK and res.get_header('cseq') == str(
+                        self.pending_keep_alive[call_id].last_used_cseq_num):
+                    del self.pending_keep_alive[call_id]  # the response was valid so the connection is kept alive
+                # else response is invalid, and we drop them at the next keep_alive check
+        else:
+            # if not keep alive then it's for an invite call
+            pass
 
     def _cleanup_expired_reg(self):
         """removes registrations that are past expiration"""
@@ -228,13 +239,13 @@ class SIPServer:
         while self.running:
             """send heartbeats. if socket didn't respond to the last heartbeat then he is inactive """
             with self.conn_lock:
-                for call_id, keep_alive in self.pending_keep_alive:
+                for call_id, keep_alive in self.pending_keep_alive.items():
                     # socket should be in connected users. check for safety
                     if keep_alive.client_socket in self.connected_users:
                         del self.pending_keep_alive[call_id]
                         self._close_connection(keep_alive.client_socket)
                 # everyone that remained has answered teh keep alive
-                for sock, _ in self.connected_users:
+                for sock in self.connected_users:
                     msg = KEEP_ALIVE_MSG
                     call_id = generate_random_call_id()
                     msg.set_header('call-id', call_id)
@@ -244,7 +255,7 @@ class SIPServer:
                         continue
                     keep_alive_obj = KeepAlive(call_id, 1, sock)
                     self.pending_keep_alive[call_id] = keep_alive_obj
-            time.sleep(10)
+            time.sleep(30)
 
     def _close_connection(self, sock):
         """remove user from both active_users and registered_users when applicable"""
