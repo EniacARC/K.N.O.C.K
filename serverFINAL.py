@@ -198,10 +198,22 @@ class SIPServer:
         if not sip_msg:
             print("error! invalid sip msg - cannot respond")
             return
-        if isinstance(sip_msg, SIPRequest):
-            self.process_request(sip_msg)
+        if sip_msg.version != SIP_VERSION:
+            error_msg = SIPMsgFactory.create_response_from_request(sip_msg, SIPStatusCode.VERSION_NOT_SUPPORTED)
+            error_msg.version = SIP_VERSION
+            if send_tcp(sock, str(error_msg).encode()):
+                if isinstance(sip_msg, SIPRequest):
+                    # check for version validity differently in request and res (because of cseq)
+                    with self.call_lock:
+                        # if it was already in the middle of a call. if not then
+                        # it will start on a different cseq (has not effect)
+                        if sip_msg.get_header('call-id') in self.active_calls:
+                            self.active_calls[sip_msg.get_header('call-id')].last_used_cseq_num += 1
         else:
-            self.process_request(sip_msg)
+            if isinstance(sip_msg, SIPRequest):
+                self.process_request(sip_msg)
+            else:
+                self.process_request(sip_msg)
 
     def process_request(self, req):
         method = req.method
@@ -213,6 +225,11 @@ class SIPServer:
             pass  # handle ack end of invite - start rtp
         elif method == SIPMethod.BYE:
             pass  # handle BYE
+
+    def register_request(self, req):
+        pass
+
+    # -----------------------------------------------------
 
     def process_response(self, res):
         call_id = res.get_header('call-id')

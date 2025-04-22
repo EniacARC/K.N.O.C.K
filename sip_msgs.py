@@ -66,7 +66,7 @@ class SIPStatusCode(Enum):
 SIP_MSG_PATTERN = r"^.*?\r\n([^:]+:[^\r\n]*\r\n)+\r\n"
 REQUEST_START_LINE_PATTERN = r'^[A-Z]+\ssip:.+\sSIP/\d\.\d'
 RESPONSE_START_LINE_PATTERN = r'^SIP/\d\.\d\s\d+\s[A-Za-z\s]+'
-REQUIRED_HEADERS = ('to', 'from', 'call-id', 'cseq', 'content-length')
+REQUIRED_HEADERS = {'to', 'from', 'call-id', 'cseq', 'content-length'}
 
 
 # required headers for sip in my use case: To, From, call-id, cseq, content-length
@@ -107,14 +107,26 @@ class SIPMsg(ABC):
         return not bool(re.match(r"^SIP", msg))
 
     def can_parse(self, msg):
-        """checks validity not logic (if headers match what they need"""
-        if re.match(SIP_MSG_PATTERN, msg):
-            headers_part, body_part = msg.split("\r\n\r\n", 1)
-            lines = headers_part.split("\r\n")
-            if self._can_parse_start_line(lines[0]):
-                key_list = set(item.split(": ") for item in lines[1:])
-                if key_list.issubset(REQUIRED_HEADERS):
-                    return True
+        try:
+            """checks validity not logic (if headers match what they need"""
+            if re.match(SIP_MSG_PATTERN, msg):
+                headers_part, body_part = msg.split("\r\n\r\n", 1)
+                lines = headers_part.split("\r\n")
+                if self._can_parse_start_line(lines[0]):
+                    key_set = set()
+                    value_set = set()
+                    for item in lines[1:]:
+                        key, value = item.split(": ", 1)  # Split on the first occurrence of ": "
+                        key = key.lower()
+                        key_set.add(key)  # Add the key to the key set
+                        value_set.add(value)  # Add the value to the value set
+                    # key_list = set(item.split(": ") for item in lines[1:])
+                    empty_values = {value for value in value_set if value.strip() == ""}
+                    if REQUIRED_HEADERS.issubset(key_set) and not empty_values:
+                        return True
+
+        except Exception as err:
+            print(f"something went wrong: {err}")
         return False
 
     def _strip_essential_headers(self):
@@ -124,7 +136,7 @@ class SIPMsg(ABC):
 
         # transform "num METHOD" to (int(num), METHOD)
         self.headers['cseq'] = self.headers['cseq'].split()
-        self.headers['cseq'][0] = int(self.headers['sceq'][0])
+        self.headers['cseq'][0] = int(self.headers['cseq'][0])
 
         self.headers['content-length'] = int(self.headers['content-length'])
 
@@ -135,7 +147,7 @@ class SIPMsg(ABC):
 
         # transform "num METHOD" to (int(num), METHOD)
         self.headers['cseq'] = self.headers['cseq'].split()
-        self.headers['sceq'][0] = int(self.headers['sceq'][0])
+        self.headers['cseq'][0] = int(self.headers['cseq'][0])
 
         self.headers['content-length'] = int(self.headers['content-length'])
 
@@ -144,7 +156,7 @@ class SIPMsg(ABC):
             headers_part, self.body = msg.split("\r\n\r\n", 1)
             lines = headers_part.split("\r\n")
             self._parse_start_line(lines[0])
-            self.headers = dict(item.split(": ") for item in lines[1:])
+            self.headers = dict(item.lower().split(": ") for item in lines[1:])
             self._strip_essential_headers()
             return True
         else:
@@ -343,3 +355,21 @@ functions:
             if header in request.headers:
                 response.headers[header] = request.headers[header]
 """
+
+# raw_invite = """REGISTER sip:10.10.1.99 SIP/2.0\r
+# CSeq: 2 REGISTER\r
+# Via: SIP/2.0/UDP 10.10.1.13:5060; branch=z9hG4bK32366531-99e1-de11-8845-080027608325;rport\r
+# User-Agent: MySipClient/4.0.0\r
+# Authorization: Digest username="test13", realm="mypbx", nonce="343eb793", uri="sip:10.10.1.99", algorithm=MD5, response="6c13de87f9cde9c44e95edbb68cbdea9"\r
+# From: <sip:13@10.10.1.99>; tag=d60e6131-99e1-de11-8845-080027608325\r
+# Call-ID: \r
+# To: <sip:13@10.10.1.99>\r
+# Contact: <sip:13@10.10.1.13>;q=1\r
+# Allow: INVITE,ACK,OPTIONS,BYE,CANCEL,SUBSCRIBE,NOTIFY,REFER, MESSAGE,INFO,PING\r
+# Expires: 3600\r
+# Content-Length: 0\r
+# Max-Forwards: 70\r
+# Expires: 3600\r
+# \r\n"""
+# msg1 = SIPRequest()
+# print(msg1.can_parse(raw_invite))
