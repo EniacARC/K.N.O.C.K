@@ -65,6 +65,7 @@ class RegisteredUser:
 
 @dataclass
 class Call:
+    call_type: SIPMethod
     call_id: str
     caller_uri: str
     callee_uri: str
@@ -76,6 +77,38 @@ class Call:
 # class Socket:
 #     sock: socket.socket
 #     creation_time: datetime.time
+
+class RegistrationMap:
+    def __init__(self):
+        self.uri_to_user = {}
+        self.socket_to_uri = {}
+
+    def add(self, user):
+        """user = RegisteredUser instance"""
+        self.uri_to_user[user.uri] = user
+        self.socket_to_uri[user.socket] = user.uri
+
+    def remove_by_socket(self, sock):
+        if sock in self.socket_to_uri:
+            uri = self.socket_to_uri[sock]
+            del self.socket_to_uri[sock]
+            del self.uri_to_user[uri]
+            return True
+        return False
+
+    def remove_by_uri(self, uri):
+        if uri in self.uri_to_user:
+            user = self.socket_to_uri[uri]
+            del self.socket_to_uri[user.socket]
+            del self.uri_to_user[uri]
+            return True
+        return False
+
+    def get_user(self, uri):
+        return self.uri_to_user[uri] if uri in self.uri_to_user else None
+
+    def get_uri(self, sock):
+        return self.socket_to_uri[sock] if sock in self.socket_to_uri else None
 
 
 class SIPServer:
@@ -100,7 +133,8 @@ class SIPServer:
 
         # user management props
         # self.socket_to_uri = {} # maybe add in the future
-        self.registered_users = {}  # uri: str -> RegisteredUser - people you can call to
+        self.registered_user = RegistrationMap()
+
         self.active_calls = {}  # call-id: str -> Call
 
         # maybe switch to socket -> socket heartbeat object(?)
@@ -132,8 +166,8 @@ class SIPServer:
                         # incoming connection
                         client_sock, addr = self.server_socket.accept()
                         with self.conn_lock:
-                            self.connected_users.append(sock)
-                            self.kept_alive_round.append(sock)
+                            self.connected_users.append(client_sock)
+                            self.kept_alive_round.append(client_sock)
                     else:
                         msg = receive_tcp(sock)
                         if msg:
@@ -151,26 +185,52 @@ class SIPServer:
             self.server_socket.close()
 
     def _worker_process_msg(self, sock, msg):
+        sip_msg = SIPMsgFactory.parse(msg.decode())
+        if not sip_msg:
+            print("error! invalid sip msg - cannot respond")
+            return
+        if isinstance(sip_msg, SIPRequest):
+            self.process_request(sock, sip_msg)
+        else:
+            self.process_request(sock, sip_msg)
+
+    def process_request(self, sock, req):
+        method = req.method
+        if method == SIPMethod.REGISTER:
+            pass  # handle register
+        elif method == SIPMethod.INVITE:
+            pass  # handle invite
+        elif method == SIPMethod.ACK:
+            pass  # handle ack end of invite - start rtp
+        elif method == SIPMethod.BYE:
+            pass  # handle BYE
+        elif method == SIPMethod.OPTIONS:
+            # connected user responded to heartbeat msg
+            with self.conn_lock:
+                self.kept_alive_round.append(sock)
+
+    def process_response(self, res):
         pass
 
     def _cleanup_expired_reg(self):
         """removes registrations that are past expiration"""
         with self.reg_lock:
-            for uri, user in self.registered_users:
+            for uri, user in self.registered_user.uri_to_user:
                 if (datetime.datetime.now() - user.registration_time) >= user.expires:
-                    del self.registered_users[uri]
+                    self.registered_user.remove_by_uri(uri)
         time.sleep(60)
 
     def _keep_alive(self):
-        """send heartbeats. if socket didn't respond to the last heartbeat then he is inactive """
-        with self.conn_lock:
-            for sock, _ in self.connected_users:
-                if sock in self.kept_alive_round:
-                    send_tcp(sock, KEEP_ALIVE_MSG.encode())
-                    self.kept_alive_round.remove(sock)
-                else:
-                    self._close_connection(sock)
-        time.sleep(10)
+        while self.running:
+            """send heartbeats. if socket didn't respond to the last heartbeat then he is inactive """
+            with self.conn_lock:
+                for sock, _ in self.connected_users:
+                    if sock in self.kept_alive_round:
+                        send_tcp(sock, KEEP_ALIVE_MSG.encode())
+                        self.kept_alive_round.remove(sock)
+                    else:
+                        self._close_connection(sock)
+            time.sleep(10)
 
     def _close_connection(self, sock):
         """remove user from both active_users and registered_users when applicable"""
@@ -180,10 +240,8 @@ class SIPServer:
             if sock in self.kept_alive_round:
                 self.kept_alive_round.remove(sock)
         with self.reg_lock:
-            for uri, user in self.registered_users:
-                # O(n) lookup not efficient. what's the point of creating sock->time if O(n) lookup anyway?
-                if user.socket == sock:
-                    del self.registered_users[uri]
+            self.registered_user.remove_by_socket(sock)
+        sock.close()
 
 # close
 # # Close all active connections
