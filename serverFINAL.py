@@ -50,6 +50,7 @@ SIP_VERSION = "SIP/2.0"
 SERVER_URI = "myserver"
 KEEP_ALIVE_LIMIT = 60 * 5
 CALL_IDLE_LIMIT = 15
+REQUIRED_HEADERS = {'to', 'from', 'call-id', 'cseq', 'content-length'}
 KEEP_ALIVE_MSG = SIPMsgFactory.create_request(sip_msgs.SIPMethod.OPTIONS, SIP_VERSION, "keep-alive", "keep-alive",
                                               "", "1")
 
@@ -214,33 +215,50 @@ class SIPServer:
         if not sip_msg:
             print("error! invalid sip msg - cannot respond")
             return
-        if sip_msg.version != SIP_VERSION:
-            error_msg = SIPMsgFactory.create_response_from_request(sip_msg, SIPStatusCode.VERSION_NOT_SUPPORTED)
-            error_msg.version = SIP_VERSION
-            if send_tcp(sock, str(error_msg).encode()):
-                if isinstance(sip_msg, SIPRequest):
-                    # check for version validity differently in request and res (because of cseq)
-                    with self.call_lock:
-                        # if it was already in the middle of a call. if not then
-                        # it will start on a different cseq (has not effect)
-                        if sip_msg.get_header('call-id') in self.active_calls:
-                            self.active_calls[sip_msg.get_header('call-id')].last_used_cseq_num += 1
+
+        if isinstance(sip_msg, SIPRequest):
+            self.process_request(sock, sip_msg)
         else:
-            if isinstance(sip_msg, SIPRequest):
-                self.process_request(sock, sip_msg)
-            else:
-                self.process_request(sock, sip_msg)
+            self.process_request(sock, sip_msg)
 
     def process_request(self, sock, req):
-        method = req.method
-        if method == SIPMethod.REGISTER:
-            pass  # handle register
-        elif method == SIPMethod.INVITE:
-            pass  # handle invite
-        elif method == SIPMethod.ACK:
-            pass  # handle ack end of invite - start rtp
-        elif method == SIPMethod.BYE:
-            pass  # handle BYE
+        not_valid = self._check_request_validly(req)
+        if not_valid:
+            if not send_tcp(sock, str(not_valid).encode()):
+                self._close_connection(sock)
+            if req.get_header('call-id'):
+                with self.call_lock:
+                    call_obj = self.active_calls.get_by_val(req.get_header('call-id'))
+                    if call_obj:
+                        call_obj.last_used_cseq_num += 1 # next request expects the next cseq number
+        else:
+            method = req.method
+            if method == SIPMethod.REGISTER:
+                pass  # handle register
+            elif method == SIPMethod.INVITE:
+                pass  # handle invite
+            elif method == SIPMethod.ACK:
+                pass  # handle ack end of invite - start rtp
+            elif method == SIPMethod.BYE:
+                pass  # handle BYE
+
+    def _check_request_validly(self, msg):
+        error_msg = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK)
+        if msg.version != SIP_VERSION:
+            error_msg.status_code = SIPStatusCode.VERSION_NOT_SUPPORTED
+            error_msg.version = SIP_VERSION
+        if REQUIRED_HEADERS.issubset(msg.headers):
+            error_msg.status_code = SIPStatusCode.BAD_REQUEST
+            missing = REQUIRED_HEADERS - msg.headers.keys()
+            for header in missing:
+                error_msg.set_header(header, "missing")
+        if msg.get_header['cseq'][1] != msg.method.lower():
+            error_msg.status_code = SIPStatusCode.BAD_REQUEST
+            error_msg.set_header('cseq', [msg.get_header['cseq'][0], msg.method.lower()])
+
+        if error_msg.status_code == SIPStatusCode.OK:
+            return None
+        return error_msg
 
     def register_request(self, sock, req):
         # doesn't check if the two requests are equal
@@ -249,14 +267,17 @@ class SIPServer:
         #     if self.registered_user.get_user(uri):
         #         error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_ACCEPTABLE)
         #         send_tcp(sock, str(error_msg).encode())
-        pass
 
 
     def invite_request(self):
-
-    # -----------------------------------------------------
+        pass
+        # -----------------------------------------------------
 
     def process_response(self, sock, res):
+        not_valid = self._check_response_valid(res)
+        if not_valid:
+            if not send_tcp(sock, not_valid):
+                self._close_connection(sock)
         call_id = res.get_header('call-id')
         if call_id in self.pending_keep_alive:
             with self.conn_lock:
@@ -268,6 +289,22 @@ class SIPServer:
         else:
             # if not keep alive then it's for an invite call
             pass
+    def _check_response_valid(self, msg):
+        error_msg = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK)
+        if msg.version != SIP_VERSION:
+            error_msg.status_code = SIPStatusCode.VERSION_NOT_SUPPORTED
+            error_msg.version = SIP_VERSION
+        if REQUIRED_HEADERS.issubset(msg.headers):
+            error_msg.status_code = SIPStatusCode.BAD_REQUEST
+            missing = REQUIRED_HEADERS - msg.headers.keys()
+            for header in missing:
+                error_msg.set_header(header, "missing")
+        if msg.status_code not in SIPStatusCode:
+            error_msg.status_code = SIPStatusCode.BAD_REQUEST
+
+        if error_msg.status_code == SIPStatusCode.OK:
+            return None
+        return error_msg
 
     def _cleanup_expired_reg(self):
         """removes registrations that are past expiration"""
@@ -321,7 +358,7 @@ class SIPServer:
                 call_obj = self.active_calls.get_by_val(call)
                 if call_obj.call_type is SIPCallType.INVITE:
                     # if invite the other side deserves a msg
-                    send_sock = call_obj.caller_socket if call.callee_socket == sock else call.callee_socket
+                    send_sock = call_obj.caller_socket if call_obj.callee_socket == sock else call_obj.callee_socket
                     to_uri, _ = send_sock.getpeername()
                     with self.reg_lock:
                         if self.registered_user.get_by_key(send_sock):

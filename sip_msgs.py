@@ -132,7 +132,8 @@ class SIPMsg(ABC):
                         value_set.add(value)  # Add the value to the value set
                     # key_list = set(item.split(": ") for item in lines[1:])
                     empty_values = {value for value in value_set if value.strip() == ""}
-                    if REQUIRED_HEADERS.issubset(key_set) and not empty_values:
+                    # REQUIRED_HEADERS.issubset(key_set) and not
+                    if empty_values:
                         return True
 
         except Exception as err:
@@ -141,25 +142,37 @@ class SIPMsg(ABC):
 
     def _strip_essential_headers(self):
         # transform <sip:uri> to uri
-        self.headers['to'] = self.headers['to'][1:-1].removeprefix("sip:")
-        self.headers['from'] = self.headers['from'][1:-1].removeprefix("sip:")
+        if 'to' in self.headers:
+            self.headers['to'] = self.headers['to'][1:-1].removeprefix("sip:")
+        if 'from' in self.headers:
+            self.headers['from'] = self.headers['from'][1:-1].removeprefix("sip:")
 
         # transform "num METHOD" to (int(num), METHOD)
-        self.headers['cseq'] = self.headers['cseq'].split()
-        self.headers['cseq'][0] = int(self.headers['cseq'][0])
+        if 'cseq' in self.headers:
+            self.headers['cseq'] = self.headers['cseq'].split()
+            self.headers['cseq'][0] = int(self.headers['cseq'][0])
 
-        self.headers['content-length'] = int(self.headers['content-length'])
+        if 'content-length' in self.headers:
+            self.headers['content-length'] = int(self.headers['content-length'])
 
     def _build_headers(self):
-        # transform <sip:uri> to uri
-        self.headers['to'] = self.headers['to'][1:-1].removeprefix("sip:")
-        self.headers['from'] = self.headers['from'][1:-1].removeprefix("sip:")
+        try:
+            # transform <sip:uri> to uri
+            if 'to' in self.headers:
+                self.headers['to'] = self.headers['to'][1:-1].removeprefix("sip:")
+            if 'from' in self.headers:
+                self.headers['from'] = self.headers['from'][1:-1].removeprefix("sip:")
 
-        # transform "num METHOD" to (int(num), METHOD)
-        self.headers['cseq'] = self.headers['cseq'].split()
-        self.headers['cseq'][0] = int(self.headers['cseq'][0])
+            # transform "num METHOD" to (int(num), METHOD)
+            if 'cseq' in self.headers:
+                self.headers['cseq'] = self.headers['cseq'].split()
+                self.headers['cseq'][0] = int(self.headers['cseq'][0])
 
-        self.headers['content-length'] = int(self.headers['content-length'])
+            if 'content-length' in self.headers:
+                self.headers['content-length'] = int(self.headers['content-length'])
+        except ValueError as err:
+            print(err)
+            return False
 
     def parse(self, msg):
         if self.can_parse(msg):
@@ -167,8 +180,7 @@ class SIPMsg(ABC):
             lines = headers_part.split("\r\n")
             self._parse_start_line(lines[0])
             self.headers = dict(item.lower().split(": ") for item in lines[1:])
-            self._strip_essential_headers()
-            return True
+            return self._strip_essential_headers()
         else:
             return False
 
@@ -305,6 +317,7 @@ class SIPMsgFactory:
         else:
             # default content-length value if not body
             res_object.set_header('content-length', 0)
+
     @staticmethod
     def create_response(status_code, version, method, to_uri, from_uri, call_id, additional_headers=None):
         res_object = SIPResponse()
@@ -318,7 +331,8 @@ class SIPMsgFactory:
         res_object.set_header('from', from_uri)
         res_object.set_header('call-id', call_id)
         res_object.set_header('cseq', '1' + ' ' + method)
-        res_object.set_header('content-length', 0) # assume this is for errors. no body needed
+        res_object.set_header('content-length', 0)  # assume this is for errors. no body needed
+
 
 """
 SipMsg
@@ -379,20 +393,22 @@ functions:
                 response.headers[header] = request.headers[header]
 """
 
-# raw_invite = """REGISTER sip:10.10.1.99 SIP/2.0\r
-# CSeq: 2 REGISTER\r
-# Via: SIP/2.0/UDP 10.10.1.13:5060; branch=z9hG4bK32366531-99e1-de11-8845-080027608325;rport\r
-# User-Agent: MySipClient/4.0.0\r
-# Authorization: Digest username="test13", realm="mypbx", nonce="343eb793", uri="sip:10.10.1.99", algorithm=MD5, response="6c13de87f9cde9c44e95edbb68cbdea9"\r
-# From: <sip:13@10.10.1.99>; tag=d60e6131-99e1-de11-8845-080027608325\r
-# Call-ID: \r
-# To: <sip:13@10.10.1.99>\r
-# Contact: <sip:13@10.10.1.13>;q=1\r
-# Allow: INVITE,ACK,OPTIONS,BYE,CANCEL,SUBSCRIBE,NOTIFY,REFER, MESSAGE,INFO,PING\r
-# Expires: 3600\r
-# Content-Length: 0\r
-# Max-Forwards: 70\r
-# Expires: 3600\r
-# \r\n"""
-# msg1 = SIPRequest()
-# print(msg1.can_parse(raw_invite))
+raw_invite = """REGISTER sip:10.10.1.99 SIP/2.0\r
+CSeq: 2 REGISTER\r
+Via: SIP/2.0/UDP 10.10.1.13:5060; branch=z9hG4bK32366531-99e1-de11-8845-080027608325;rport\r
+User-Agent: MySipClient/4.0.0\r
+Authorization: Digest username="test13", realm="mypbx", nonce="343eb793", uri="sip:10.10.1.99", algorithm=MD5, response="6c13de87f9cde9c44e95edbb68cbdea9"\r
+From: <sip:13@10.10.1.99>; tag=d60e6131-99e1-de11-8845-080027608325\r
+Call-ID: \r
+To: <sip:13@10.10.1.99>\r
+Contact: <sip:13@10.10.1.13>;q=1\r
+Allow: INVITE,ACK,OPTIONS,BYE,CANCEL,SUBSCRIBE,NOTIFY,REFER, MESSAGE,INFO,PING\r
+Expires: 3600\r
+Content-Length: 0\r
+Max-Forwards: 70\r
+Expires: 3600\r
+\r\n"""
+msg1 = SIPRequest()
+print(msg1.can_parse(raw_invite))
+print(msg1.parse(raw_invite))
+print(msg1.method)
