@@ -226,7 +226,7 @@ class SIPServer:
         if not_valid:
             if not send_tcp(sock, str(not_valid).encode()):
                 self._close_connection(sock)
-            if req.get_header('call-id'):
+            if not_valid.get_header('call-id'):
                 with self.call_lock:
                     call_obj = self.active_calls.get_by_val(req.get_header('call-id'))
                     if call_obj:
