@@ -23,10 +23,12 @@ class AuthService:
         # in real imp use database connector to get the ha1
         return TEMP_H1
 
-    def _get_ha2(self, method):
-        return hashlib.md5(f"{method}:{self.name}")
+    def _get_ha2(self, method, realm):
+        return hashlib.md5(f"{method}:{realm}")
 
-    def calculate_hash_auth(self, username, method, nonce):
+    def calculate_hash_auth(self, username, method, nonce, realm=None):
+        if not realm:
+            realm = self.name
         ha1 = self._get_ha1(username)
         ha2 = self._get_ha2(method)
         return hashlib.md5(f"{ha1}:{nonce}:{ha2}")
