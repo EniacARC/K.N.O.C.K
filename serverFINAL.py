@@ -126,7 +126,8 @@ class SIPServer:
         self.registered_user = BiMap(key_attr="socket", value_attr="uri")
 
         # call lock
-        self.active_calls = BiMap(key_attr="socket", value_attr="call_id")  # call lock
+        self.active_calls = {}  # call lock. call-id -> Call
+        # no use for bi map here. there can be a socket in multiple calls still O(n)
         self.pending_auth = {}  # uri -> AuthChallenge
         self.authority = AuthService(SERVER_URI)
 
@@ -191,7 +192,7 @@ class SIPServer:
             self._send_to_client(sock, str(not_valid).encode())
             if not_valid.get_header('call-id'):
                 with self.call_lock:
-                    call_obj = self.active_calls.get_by_val(req.get_header('call-id'))
+                    call_obj = self.active_calls[req.get_header('call-id')]
                     if call_obj:
                         call_obj.last_used_cseq_num += 1  # Next request expects the next cseq number
         else:
@@ -231,8 +232,8 @@ class SIPServer:
         cseq = req.get_header('cseq')[0]
         with self.call_lock:
             # verify call details are the ok
-            if call_id in self.active_calls.val_to_obj:
-                call = self.active_calls.get_by_val(call_id)
+            if call_id in self.active_calls:
+                call = self.active_calls[call_id]
                 if cseq != call.cseq + 1 or call.uri != uri_recv or req.uri or call.method != req.method:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST)
                     self._send_to_client(sock, str(error_msg).encode())
@@ -286,8 +287,8 @@ class SIPServer:
 
         with self.call_lock:
             # verify call details are the ok
-            if call_id in self.active_calls.val_to_obj:
-                call = self.active_calls.get_by_val(call_id)
+            if call_id in self.active_calls:
+                call = self.active_calls[call_id]
                 if cseq != call.cseq + 1 or call.uri != uri or req.uri or call.method != req.method:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST)
                     self._send_to_client(sock, str(error_msg).encode())
@@ -330,7 +331,7 @@ class SIPServer:
                     else:
                         # user authenticated
                         del self.pending_auth[call_id]
-                        self.active_calls.remove_by_val(call_id)
+                        del self.active_calls[call_id]
                         print("user authenticated")
                         with self.reg_lock:
                             user = RegisteredUser(
@@ -409,6 +410,8 @@ class SIPServer:
                 # Else response is invalid, and we drop them at the next keep_alive check
         else:
             # If not keep alive then it's for an invite call
+            with self.call_lock:
+                call = self.active_calls[call_id]
 
 
     def _check_response_valid(self, msg):
@@ -439,9 +442,9 @@ class SIPServer:
     def _cleanup_inactive_calls(self):
         """Removes calls with sockets that are inactive"""
         with self.call_lock:
-            for call_id, call in self.active_calls.val_to_obj:
+            for call_id, call in self.active_calls:
                 if (datetime.datetime.now() - call.last_active) >= CALL_IDLE_LIMIT:
-                    self.active_calls.remove_by_val(call_id)
+                    del self.active_calls[call_id]
 
                     # if the call was register then we need to remove the invalid auth challenge
                     if call.uri in self.pending_auth:
@@ -478,20 +481,19 @@ class SIPServer:
             self.registered_user.remove_by_key(sock)
         with self.conn_lock:
             # Remove a call that the sock is in. If there is another UAC send them an error msg
-            call = self.active_calls.get_by_key(sock)
-            if call:
-                call_obj = self.active_calls.get_by_val(call)
-                if call_obj.call_type is SIPCallType.INVITE:
-                    # If invite the other side deserves a msg
-                    send_sock = call_obj.caller_socket if call_obj.callee_socket == sock else call_obj.callee_socket
-                    to_uri, _ = send_sock.getpeername()
-                    with self.reg_lock:
-                        if self.registered_user.get_by_key(send_sock):
-                            to_uri = self.registered_user.get_by_key(send_sock)
-                    end_msg = SIPMsgFactory.create_response(SIPStatusCode.NOT_FOUND, SIP_VERSION, SIPMethod.INVITE,
-                                                            to_uri, SERVER_URI, call)
-                    self.active_calls.remove_by_key(sock)  # If one of the sockets is removed the call ends
-                    self._send_to_client(sock, str(end_msg).encode())
+            for call_id, call in self.active_calls:
+
+                if call.caller_socket is sock or call.callee_socket is sock:
+                    if call.call_obj.call_type == SIPCallType.INVITE:
+                        send_sock = call.caller_socket if call.callee_socket == sock else call.callee_socket
+                        with self.reg_lock:
+                            if self.registered_user.get_by_key(send_sock):
+                                to_uri = self.registered_user.get_by_key(send_sock)
+                                end_msg = SIPMsgFactory.create_response(SIPStatusCode.NOT_FOUND, SIP_VERSION,
+                                                                        SIPMethod.INVITE, to_uri, SERVER_URI, call)
+                                self._send_to_client(sock, str(end_msg).encode())
+                    del self.active_calls[call_id]
+
         sock.close()
 
     def _send_to_client(self, sock, data):
