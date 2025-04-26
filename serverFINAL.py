@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from comms import *
 import select
+from collections import Counter
 
 # Constants
 DEFAULT_SERVER_PORT = 5040
@@ -39,7 +40,7 @@ class Call:  # For both invite and register
     call_id: str
     uri: str  # Either caller or callee depending on call type
     callee_socket: socket.socket
-    caller_socket = socket.socket
+    caller_socket: socket.socket
     call_state: SIPCallState
     last_used_cseq_num: int
     last_active: datetime.datetime
@@ -110,6 +111,9 @@ class SIPServer:
         self.server_socket = None
         self.running = False
         self.queue_len = 5
+        # for the future dos blocker
+        # self.connection_counts = Counter()  # For IP rate limiting - ip -> int
+        # self.max_connections_per_ip = 100
 
         # Thread pool properties
         self.thread_pool = concurrent.futures.ThreadPoolExecutor(
@@ -224,6 +228,14 @@ class SIPServer:
             return None
         return error_msg
 
+    def ack_request(self, sock, req):
+        # pass ack to the other side start rtp
+        pass
+
+    def bye_request(self, sock, req):
+        # close the call
+        pass
+
     def invite_request(self, sock, req):
         # in register uri the uri you are trying to register
         uri_sender = req.get_header('from')
@@ -232,12 +244,26 @@ class SIPServer:
         cseq = req.get_header('cseq')[0]
         with self.call_lock:
             # verify call details are the ok
+            call = None
             if call_id in self.active_calls:
                 call = self.active_calls[call_id]
-                if cseq != call.cseq + 1 or call.uri != uri_recv or call.method != req.method or (
-                        sock is not call.caller_socket and sock is not call.callee_socket):
+                if cseq != call.cseq + 1 or call.uri != uri_recv or call.method != req.method or sock is not call.caller_socket:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST)
                     self._send_to_client(sock, str(error_msg).encode())
+            else:
+                call = Call(
+                    call_type=SIPCallType.REGISTER,
+                    call_id=call_id,
+                    uri=uri_recv,
+                    callee_socket=self.server_socket,
+                    caller_socket=None,
+                    call_state=SIPCallState.WAITING_AUTH,
+                    last_used_cseq_num=cseq,
+                    last_active=datetime.datetime.now()
+                )
+                self.active_calls[call_id] = call
+            call.last_used_cseq_num += 1
+            call.last_active = datetime.datetime.now()
 
         # made sure the user is auth
         # make sure we can call the callee
@@ -252,6 +278,10 @@ class SIPServer:
                 return
             if self.registered_user.get_by_val(uri_sender) and self.registered_user.get_by_key(sock):
                 is_auth = True
+
+        # now we know who are we trying to call
+        call.caller_socket = user_recv.socket
+
         if auth_header:
             if not is_auth:
                 with self.call_lock:
@@ -268,6 +298,11 @@ class SIPServer:
         else:
             self._create_auth_challenge(sock, req)
         # now we know the user is authenticated we can proceed to send the invite
+
+        call.call_state = SIPCallState.TRYING
+
+        # change sdp for proxy!
+
         self._send_to_client(user_recv.socket, str(req).encode())
         self._send_to_client(sock, SIPMsgFactory.create_response_from_request(req, SIPStatusCode.TRYING))
 
@@ -281,18 +316,28 @@ class SIPServer:
         if req.get_header('expires'):
             expires = int(req.get_header('expires'))
 
-        if to_uri != SERVER_URI:
-            # the request is for the server
-            error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST)
-            self._send_to_client(sock, str(error_msg).encode())
-
         with self.call_lock:
             # verify call details are the ok
+            call = None
             if call_id in self.active_calls:
                 call = self.active_calls[call_id]
                 if cseq != call.cseq + 1 or call.uri != uri or call.method != req.method or sock is not call.caller_socket:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST)
                     self._send_to_client(sock, str(error_msg).encode())
+            else:
+                call = Call(
+                    call_type=SIPCallType.REGISTER,
+                    call_id=call_id,
+                    uri=uri,
+                    callee_socket=self.server_socket,
+                    caller_socket=sock,
+                    call_state=SIPCallState.WAITING_AUTH,
+                    last_used_cseq_num=cseq,
+                    last_active=datetime.datetime.now(),
+                )
+                self.active_calls[call_id] = call
+            call.last_used_cseq_num += 1
+            call.last_active = datetime.datetime.now()
 
         with self.reg_lock:
             if self.registered_user.get_by_key(sock):
@@ -409,17 +454,18 @@ class SIPServer:
         cseq = res.get_header('cseq')[0]
         call_id = res.get_header('call-id')
         with self.call_lock:
-            # verify call details are the ok
-            call = self.active_calls.get(call_id)
-            if not call or cseq != call.cseq:
-                if not call:
-                    error_msg = SIPMsgFactory.create_response_from_request(res, SIPStatusCode.NOT_FOUND)
-                else:
-                    error_msg = SIPMsgFactory.create_response_from_request(res, SIPStatusCode.BAD_REQUEST)
-
-                # the cseq value is not valid or call doesn't exist
+            if call_id not in self.active_calls and call_id not in self.pending_keep_alive:
+                # the call doesn't exist
+                error_msg = SIPMsgFactory.create_response_from_request(res, SIPStatusCode.NOT_FOUND)
                 self._send_to_client(sock, str(error_msg).encode())
                 return
+            if call_id in self.active_calls:
+                call = self.active_calls[call_id]
+                if not cseq != call.last_used_cseq_num:
+                    error_msg = SIPMsgFactory.create_response_from_request(res, SIPStatusCode.BAD_REQUEST)
+                    self._send_to_client(sock, str(error_msg).encode())
+                    return
+                call.last_active = datetime.datetime.now()
 
         if call_id in self.pending_keep_alive:
             with self.conn_lock:
@@ -432,8 +478,24 @@ class SIPServer:
             # If not keep alive then it's for an invite call
             with self.call_lock:
                 call = self.active_calls[call_id]
-                send_sock = call.caller_socket if sock != call.caller_socket else call.callee_socket
-                self._send_to_client(send_sock, str(res).encode())
+                if call.call_type == SIPCallType.INVITE:
+                    # now we check if we can advance state. if we cannot then we send and error response
+                    if call.call_state == SIPCallState.TRYING and res.status_code == SIPStatusCode.RINGING:
+                        call.call_state = SIPCallState.RINGING
+                    elif call.call_state == SIPCallState.RINGING and res.status_code == SIPStatusCode.OK:
+                        call.call_state = SIPCallState.WAITING_ACK
+                        # proccess sdp for the other side
+                    else:
+                        error_msg = SIPMsgFactory.create_response_from_request(res, SIPStatusCode.NOT_ACCEPTABLE)
+                        self._send_to_client(sock, str(error_msg).encode())
+                        return  # we do not want to foward thhe invalid msg
+
+                    send_sock = call.caller_socket if sock != call.caller_socket else call.callee_socket
+                    self._send_to_client(send_sock, str(res).encode())
+                else:
+                    error_msg = SIPMsgFactory.create_response_from_request(res, SIPStatusCode.NOT_ACCEPTABLE_ANYWHERE)
+                    self._send_to_client(sock, str(error_msg).encode())
+
 
     def _check_response_valid(self, msg):
         error_msg = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK)
@@ -520,3 +582,9 @@ class SIPServer:
     def _send_to_client(self, sock, data):
         if not send_tcp(sock, data):
             self._close_connection(sock)
+
+
+"""
+for each call have a state so you know if the msgs send are valid for the state. 
+have diuffernt thred for srt. send commands through queue.
+"""

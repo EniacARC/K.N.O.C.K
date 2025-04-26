@@ -19,8 +19,11 @@ class SIPMethod(Enum):
 
 
 class SIPCallState(Enum):
-    ESTABLISHED = "ESTABLISHED"
-    IN_PROGRESS = "IN PROGRESS"
+    WAITING_AUTH = "WAITING AUTH"
+    TRYING = "TRYING"
+    RINGING = "RINGING"
+    WAITING_ACK = "WAITING ACK"
+    IN_CALL = "IN CALL"
 
 
 class SIPCallType(Enum):
