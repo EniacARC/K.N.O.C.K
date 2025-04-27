@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from enum import Enum
 from comms import *
 import select
+from sdp_class import *
+from typing import Optional
 from collections import Counter
 
 # Constants
@@ -16,6 +18,7 @@ DEFAULT_SERVER_PORT = 5040
 MAX_WORKERS = 10
 SIP_VERSION = "SIP/2.0"
 SERVER_URI = "myserver"
+SERVER_IP = '127.0.0.1'  # need to find out using sbc
 CALL_IDLE_LIMIT = 15
 REGISTER_LIMIT = 60
 REQUIRED_HEADERS = {'to', 'from', 'call-id', 'cseq', 'content-length'}
@@ -33,17 +36,35 @@ class RegisteredUser:
     expires: int  # amount of seconds
 
 
+@dataclass
+class SDPProxyInfo:
+    sdp_msg: SDP
+    swap_ip: str
+    swap_audio_port = Optional[int]
+    swap_video_port = Optional[int]
+
+
 # Dataclasses for storing session info for each message type
 @dataclass
 class Call:  # For both invite and register
     call_type: SIPCallType
     call_id: str
     uri: str  # Either caller or callee depending on call type
-    callee_socket: socket.socket
-    caller_socket: socket.socket
     call_state: SIPCallState
     last_used_cseq_num: int
     last_active: datetime.datetime
+    callee_socket: socket.socket = None
+    caller_socket: socket.socket = None
+
+
+@dataclass
+class InviteCall(Call):
+    caller_rtp: SDPProxyInfo = None
+    callee_rtp: SDPProxyInfo = None
+
+    def __post_init__(self):
+        if self.call_type != SIPCallType.INVITE:
+            raise ValueError("InviteCall must have call_type INVITE")
 
 
 @dataclass
@@ -131,6 +152,7 @@ class SIPServer:
 
         # call lock
         self.active_calls = {}  # call lock. call-id -> Call
+        self.proxy_list = {}  # call_id -> [SDPProxyInfo].
         # no use for bi map here. there can be a socket in multiple calls still O(n)
         self.pending_auth = {}  # uri -> AuthChallenge
         self.authority = AuthService(SERVER_URI)
@@ -234,6 +256,7 @@ class SIPServer:
 
     def bye_request(self, sock, req):
         # close the call
+        # close rtp call send bye to other side terminate call
         pass
 
     def invite_request(self, sock, req):
@@ -242,7 +265,7 @@ class SIPServer:
         uri_recv = req.get_header('to')
         call_id = req.get_header("call-id")
         cseq = req.get_header('cseq')[0]
-        with self.call_lock:
+        with self.call_lock:  # it's better to get the lock for the whole func instead of acquiring multiple times
             # verify call details are the ok
             call = None
             if call_id in self.active_calls:
@@ -251,12 +274,11 @@ class SIPServer:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST)
                     self._send_to_client(sock, str(error_msg).encode())
             else:
-                call = Call(
+                call = InviteCall(
                     call_type=SIPCallType.REGISTER,
                     call_id=call_id,
                     uri=uri_recv,
                     callee_socket=self.server_socket,
-                    caller_socket=None,
                     call_state=SIPCallState.WAITING_AUTH,
                     last_used_cseq_num=cseq,
                     last_active=datetime.datetime.now()
@@ -265,26 +287,25 @@ class SIPServer:
             call.last_used_cseq_num += 1
             call.last_active = datetime.datetime.now()
 
-        # made sure the user is auth
-        # make sure we can call the callee
-        is_auth = False
-        auth_header = req.get_header('WWW-Authenticate')
-        user_recv = None
-        with self.reg_lock:
-            user_recv = self.registered_user.get_by_val(uri_recv)
-            if not user_recv:
-                error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_FOUND)
-                self._send_to_client(sock, str(error_msg).encode())
-                return
-            if self.registered_user.get_by_val(uri_sender) and self.registered_user.get_by_key(sock):
-                is_auth = True
+            # made sure the user is auth
+            # make sure we can call the callee
+            is_auth = False
+            auth_header = req.get_header('WWW-Authenticate')
+            user_recv = None
+            with self.reg_lock:
+                user_recv = self.registered_user.get_by_val(uri_recv)
+                if not user_recv:
+                    error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_FOUND)
+                    self._send_to_client(sock, str(error_msg).encode())
+                    return
+                if self.registered_user.get_by_val(uri_sender) and self.registered_user.get_by_key(sock):
+                    is_auth = True
 
-        # now we know who are we trying to call
-        call.caller_socket = user_recv.socket
+            # now we know who are we trying to call
+            call.caller_socket = user_recv.socket
 
-        if auth_header:
-            if not is_auth:
-                with self.call_lock:
+            if auth_header:
+                if not is_auth:
                     if call_id not in self.pending_auth:
                         # auth request was either timed out or never sent
                         self._create_auth_challenge(sock, req)
@@ -295,16 +316,44 @@ class SIPServer:
                         error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST)
                         self._send_to_client(sock, str(error_msg).encode())
                         return
-        else:
-            self._create_auth_challenge(sock, req)
-        # now we know the user is authenticated we can proceed to send the invite
+            else:
+                self._create_auth_challenge(sock, req)
+                return
+            # now we know the user is authenticated we can proceed to send the invite
 
-        call.call_state = SIPCallState.TRYING
+            call.call_state = SIPCallState.TRYING
 
-        # change sdp for proxy!
+            # change sdp for proxy!
+            if req.body:
+                sdp_msg = SDP.parse(req.body)
+                sdp_swap = SDPProxyInfo(
+                    sdp_msg=sdp_msg,
+                    swap_ip=SERVER_IP
+                )
+                if sdp_msg:
+                    if sdp_msg.audio_port:
+                        # allocate ports and check if it doesn't exist
+                        port = random.randint(1, 1000) # change with request to the rtp server
+                        for call_id, proxy_infos in self.proxy_list.items():
+                            for proxy_info in proxy_infos:  # Iterate through each list (SDPProxyInfo objects)
+                                if proxy_info.swap_audio_port == port or proxy_info.swap_video_port == port:
+                                    port = random.randint(1, 1000)
+                        sdp_swap.swap_audio_port = port
+                    if sdp_msg.video_port:
+                        # allocate ports and check if it doesn't exist
+                        port = random.randint(1, 1000)
+                        for call_id, proxy_infos in self.proxy_list.items():
+                            for proxy_info in proxy_infos:  # Iterate through each list (SDPProxyInfo objects)
+                                if proxy_info.swap_audio_port == port or proxy_info.swap_video_port == port:
+                                    port = random.randint(1, 1000)
+                        sdp_swap.swap_video_port = port
 
-        self._send_to_client(user_recv.socket, str(req).encode())
-        self._send_to_client(sock, SIPMsgFactory.create_response_from_request(req, SIPStatusCode.TRYING))
+                    self.proxy_list[call_id] = [sdp_swap] # this is the first sdp need to create
+                    self._send_to_client(user_recv.socket, str(req).encode())
+                    self._send_to_client(sock, SIPMsgFactory.create_response_from_request(req, SIPStatusCode.TRYING))
+
+            error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST)
+            self._send_to_client(sock, str(error_msg).encode())
 
     def register_request(self, sock, req):
         # in register uri the uri you are trying to register
@@ -353,6 +402,7 @@ class SIPServer:
                         )
                         self.registered_user.add(user)  # overrides previous register if exists
                         self._send_to_client(sock, SIPMsgFactory.create_response_from_request(req, SIPStatusCode.OK))
+                    del self.active_calls[call_id]  # remove call
         auth_header = req.get_header('WWW-Authenticate')
         if auth_header:
             with self.call_lock:
@@ -456,14 +506,14 @@ class SIPServer:
         with self.call_lock:
             if call_id not in self.active_calls and call_id not in self.pending_keep_alive:
                 # the call doesn't exist
-                error_msg = SIPMsgFactory.create_response_from_request(res, SIPStatusCode.NOT_FOUND)
-                self._send_to_client(sock, str(error_msg).encode())
+                not_valid.status_code = SIPStatusCode.NOT_FOUND
+                self._send_to_client(sock, str(not_valid).encode())
                 return
             if call_id in self.active_calls:
                 call = self.active_calls[call_id]
                 if not cseq != call.last_used_cseq_num:
-                    error_msg = SIPMsgFactory.create_response_from_request(res, SIPStatusCode.BAD_REQUEST)
-                    self._send_to_client(sock, str(error_msg).encode())
+                    not_valid.status_code = SIPStatusCode.BAD_REQUEST
+                    self._send_to_client(sock, str(not_valid).encode())
                     return
                 call.last_active = datetime.datetime.now()
 
@@ -485,20 +535,56 @@ class SIPServer:
                     elif call.call_state == SIPCallState.RINGING and res.status_code == SIPStatusCode.OK:
                         call.call_state = SIPCallState.WAITING_ACK
                         # proccess sdp for the other side
+                        if not res.body:
+                            not_valid.status_code = SIPStatusCode.BAD_REQUEST
+                            self._send_to_client(sock, str(not_valid).encode())
+                            return
+
+                        sdp_msg = SDP.parse(res.body)
+                        if not sdp_msg:
+                            not_valid.status_code = SIPStatusCode.BAD_REQUEST
+                            self._send_to_client(sock, str(not_valid).encode())
+                            return
+
+                        sdp_swap = SDPProxyInfo(
+                            sdp_msg=sdp_msg,
+                            swap_ip=SERVER_IP
+                        )
+
+                        if sdp_msg.audio_port:
+                            # allocate ports and check if it doesn't exist
+                            port = random.randint(1, 1000)  # change with request to the rtp server
+                            for call_id, proxy_infos in self.proxy_list.items():
+                                for proxy_info in proxy_infos:  # Iterate through each list (SDPProxyInfo objects)
+                                    if proxy_info.swap_audio_port == port or proxy_info.swap_video_port == port:
+                                        port = random.randint(1, 1000)
+                            sdp_swap.swap_audio_port = port
+                            if sdp_msg.video_port:
+                                # allocate ports and check if it doesn't exist
+                                port = random.randint(1, 1000)
+                                for call_id, proxy_infos in self.proxy_list.items():
+                                    for proxy_info in proxy_infos:  # Iterate through each list (SDPProxyInfo objects)
+                                        if proxy_info.swap_audio_port == port or proxy_info.swap_video_port == port:
+                                            port = random.randint(1, 1000)
+                                sdp_swap.swap_video_port = port
+                        self.proxy_list[call_id].append(sdp_swap) # we know the list exists already
+
                     else:
-                        error_msg = SIPMsgFactory.create_response_from_request(res, SIPStatusCode.NOT_ACCEPTABLE)
-                        self._send_to_client(sock, str(error_msg).encode())
+                        not_valid.status_code = SIPStatusCode.NOT_ACCEPTABLE
+                        self._send_to_client(sock, str(not_valid).encode())
                         return  # we do not want to foward thhe invalid msg
 
                     send_sock = call.caller_socket if sock != call.caller_socket else call.callee_socket
                     self._send_to_client(send_sock, str(res).encode())
                 else:
+                    # if the call was not an invite then it is not possible to send response
                     error_msg = SIPMsgFactory.create_response_from_request(res, SIPStatusCode.NOT_ACCEPTABLE_ANYWHERE)
                     self._send_to_client(sock, str(error_msg).encode())
 
-
     def _check_response_valid(self, msg):
-        error_msg = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK)
+        error_msg = SIPMsgFactory.create_response(SIPStatusCode.OK, SIP_VERSION,
+                                                  msg.get_header('cseq'), msg.get_header('to'),
+                                                  msg.get_header('from'), msg.get_header('call-id'))
         if msg.version != SIP_VERSION:
             error_msg.status_code = SIPStatusCode.VERSION_NOT_SUPPORTED
             error_msg.version = SIP_VERSION
@@ -532,6 +618,8 @@ class SIPServer:
                     # if the call was register then we need to remove the invalid auth challenge
                     if call.uri in self.pending_auth:
                         del self.pending_auth[call.uri]
+                    if call_id in self.proxy_list:
+                        del self.proxy_list[call_id]
         time.sleep(30)
 
     def _keep_alive(self):
@@ -562,10 +650,9 @@ class SIPServer:
                 # pending_keep_alive entry would be removed by the _keep_alive func
         with self.reg_lock:
             self.registered_user.remove_by_key(sock)
-        with self.conn_lock:
+        with self.call_lock:
             # Remove a call that the sock is in. If there is another UAC send them an error msg
             for call_id, call in self.active_calls:
-
                 if call.caller_socket is sock or call.callee_socket is sock:
                     if call.call_obj.call_type == SIPCallType.INVITE:
                         send_sock = call.caller_socket if call.callee_socket == sock else call.callee_socket
@@ -575,6 +662,11 @@ class SIPServer:
                                 end_msg = SIPMsgFactory.create_response(SIPStatusCode.NOT_FOUND, SIP_VERSION,
                                                                         SIPMethod.INVITE, to_uri, SERVER_URI, call)
                                 self._send_to_client(sock, str(end_msg).encode())
+
+                    if call.uri in self.pending_auth:
+                        del self.pending_auth[call.uri]
+                    if call_id in self.proxy_list:
+                        del self.proxy_list[call_id]
                     del self.active_calls[call_id]
 
         sock.close()
