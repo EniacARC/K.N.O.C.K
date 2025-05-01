@@ -20,10 +20,15 @@ class SIPMethod(Enum):
 
 class SIPCallState(Enum):
     WAITING_AUTH = "WAITING AUTH"
+
     TRYING = "TRYING"
     RINGING = "RINGING"
     WAITING_ACK = "WAITING ACK"
     IN_CALL = "IN CALL"
+
+    INIT_CANCEL = "INIT CANCEL"
+    TRYING_CANCEL = "TRYING CANCEL"
+
 
 
 class SIPCallType(Enum):
@@ -60,6 +65,7 @@ class SIPStatusCode(Enum):
     NOT_ACCEPTABLE = (406, "Not Acceptable")
     PROXY_AUTHENTICATION_REQUIRED = (407, "Proxy Authentication Required")
     REQUEST_TIMEOUT = (408, "Request Timeout")
+    REQUEST_TERMINATED = (487, "Request Terminated")
 
     # 5xx - Server Error
     SERVER_INTERNAL_ERROR = (500, "Server Internal Error")
@@ -303,7 +309,7 @@ class SIPMsgFactory:
             req_object.set_header('content-length', 0)
 
     @staticmethod
-    def create_response_from_request(request, status_code, additional_headers=None):
+    def create_response_from_request(request, status_code, from_uri, additional_headers=None):
         res_object = SIPResponse()
         res_object.status_code = status_code
         if additional_headers:
@@ -312,7 +318,7 @@ class SIPMsgFactory:
 
         res_object.version = request.version
         res_object.set_header('to', request.headers['to'])
-        res_object.set_header('from', request.headers['from'])
+        res_object.set_header('from', from_uri)
         res_object.set_header('call-id', request.headers['call-id'])
         res_object.set_header('cseq', request.headers['cseq'] + ' ' + request.method)
         if request.body:
