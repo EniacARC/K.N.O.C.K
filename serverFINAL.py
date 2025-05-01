@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from comms import *
 import select
-from sdp_class import *
+# from sdp_class import *
 from typing import Optional
 from collections import Counter
 
@@ -36,12 +36,12 @@ class RegisteredUser:
     expires: int  # amount of seconds
 
 
-@dataclass
-class SDPProxyInfo:
-    sdp_msg: SDP
-    swap_ip: str
-    swap_audio_port = Optional[int]
-    swap_video_port = Optional[int]
+# @dataclass
+# class SDPProxyInfo:
+#     sdp_msg: SDP
+#     swap_ip: str
+#     swap_audio_port = Optional[int]
+#     swap_video_port = Optional[int]
 
 
 # Dataclasses for storing session info for each message type
@@ -55,16 +55,6 @@ class Call:  # For both invite and register
     last_active: datetime.datetime
     callee_socket: socket.socket = None
     caller_socket: socket.socket = None
-
-
-@dataclass
-class InviteCall(Call):
-    caller_rtp: SDPProxyInfo = None
-    callee_rtp: SDPProxyInfo = None
-
-    def __post_init__(self):
-        if self.call_type != SIPCallType.INVITE:
-            raise ValueError("InviteCall must have call_type INVITE")
 
 
 @dataclass
@@ -152,7 +142,6 @@ class SIPServer:
 
         # call lock
         self.active_calls = {}  # call lock. call-id -> Call
-        self.proxy_list = {}  # call_id -> [SDPProxyInfo].
         # no use for bi map here. there can be a socket in multiple calls still O(n)
         self.pending_auth = {}  # uri -> AuthChallenge
         self.authority = AuthService(SERVER_URI)
@@ -270,11 +259,11 @@ class SIPServer:
             call = None
             if call_id in self.active_calls:
                 call = self.active_calls[call_id]
-                if cseq != call.cseq + 1 or call.uri != uri_recv or call.method != req.method or sock is not call.caller_socket:
+                if cseq != call.cseq + 1 or call.uri != uri_recv or call.method != req.method or call.method != SIPMethod.INVITE or sock is not call.caller_socket:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST)
                     self._send_to_client(sock, str(error_msg).encode())
             else:
-                call = InviteCall(
+                call = Call(
                     call_type=SIPCallType.REGISTER,
                     call_id=call_id,
                     uri=uri_recv,
@@ -317,43 +306,23 @@ class SIPServer:
                         self._send_to_client(sock, str(error_msg).encode())
                         return
             else:
-                self._create_auth_challenge(sock, req)
-                return
+                if call.call_state == SIPCallState.WAITING_AUTH:
+                    self._create_auth_challenge(sock, req)
+                    return
+                # the call in this connection was authenticated no need to authenticate again
+
             # now we know the user is authenticated we can proceed to send the invite
 
+            if call_id in self.pending_auth:
+                del self.pending_auth
+
             call.call_state = SIPCallState.TRYING
-
-            # change sdp for proxy!
-            if req.body:
-                sdp_msg = SDP.parse(req.body)
-                sdp_swap = SDPProxyInfo(
-                    sdp_msg=sdp_msg,
-                    swap_ip=SERVER_IP
-                )
-                if sdp_msg:
-                    if sdp_msg.audio_port:
-                        # allocate ports and check if it doesn't exist
-                        port = random.randint(1, 1000) # change with request to the rtp server
-                        for call_id, proxy_infos in self.proxy_list.items():
-                            for proxy_info in proxy_infos:  # Iterate through each list (SDPProxyInfo objects)
-                                if proxy_info.swap_audio_port == port or proxy_info.swap_video_port == port:
-                                    port = random.randint(1, 1000)
-                        sdp_swap.swap_audio_port = port
-                    if sdp_msg.video_port:
-                        # allocate ports and check if it doesn't exist
-                        port = random.randint(1, 1000)
-                        for call_id, proxy_infos in self.proxy_list.items():
-                            for proxy_info in proxy_infos:  # Iterate through each list (SDPProxyInfo objects)
-                                if proxy_info.swap_audio_port == port or proxy_info.swap_video_port == port:
-                                    port = random.randint(1, 1000)
-                        sdp_swap.swap_video_port = port
-
-                    self.proxy_list[call_id] = [sdp_swap] # this is the first sdp need to create
-                    self._send_to_client(user_recv.socket, str(req).encode())
-                    self._send_to_client(sock, SIPMsgFactory.create_response_from_request(req, SIPStatusCode.TRYING))
-
-            error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST)
-            self._send_to_client(sock, str(error_msg).encode())
+            if not req.body:
+                error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST)
+                self._send_to_client(sock, str(error_msg).encode())
+                return
+            self._send_to_client(user_recv.socket, str(req).encode())
+            self._send_to_client(sock, SIPMsgFactory.create_response_from_request(req, SIPStatusCode.TRYING))
 
     def register_request(self, sock, req):
         # in register uri the uri you are trying to register
@@ -370,7 +339,7 @@ class SIPServer:
             call = None
             if call_id in self.active_calls:
                 call = self.active_calls[call_id]
-                if cseq != call.cseq + 1 or call.uri != uri or call.method != req.method or sock is not call.caller_socket:
+                if cseq != call.cseq + 1 or call.uri != uri or call.method != req.method or call.method != SIPMethod.REGISTER or sock is not call.caller_socket:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST)
                     self._send_to_client(sock, str(error_msg).encode())
             else:
@@ -540,35 +509,6 @@ class SIPServer:
                             self._send_to_client(sock, str(not_valid).encode())
                             return
 
-                        sdp_msg = SDP.parse(res.body)
-                        if not sdp_msg:
-                            not_valid.status_code = SIPStatusCode.BAD_REQUEST
-                            self._send_to_client(sock, str(not_valid).encode())
-                            return
-
-                        sdp_swap = SDPProxyInfo(
-                            sdp_msg=sdp_msg,
-                            swap_ip=SERVER_IP
-                        )
-
-                        if sdp_msg.audio_port:
-                            # allocate ports and check if it doesn't exist
-                            port = random.randint(1, 1000)  # change with request to the rtp server
-                            for call_id, proxy_infos in self.proxy_list.items():
-                                for proxy_info in proxy_infos:  # Iterate through each list (SDPProxyInfo objects)
-                                    if proxy_info.swap_audio_port == port or proxy_info.swap_video_port == port:
-                                        port = random.randint(1, 1000)
-                            sdp_swap.swap_audio_port = port
-                            if sdp_msg.video_port:
-                                # allocate ports and check if it doesn't exist
-                                port = random.randint(1, 1000)
-                                for call_id, proxy_infos in self.proxy_list.items():
-                                    for proxy_info in proxy_infos:  # Iterate through each list (SDPProxyInfo objects)
-                                        if proxy_info.swap_audio_port == port or proxy_info.swap_video_port == port:
-                                            port = random.randint(1, 1000)
-                                sdp_swap.swap_video_port = port
-                        self.proxy_list[call_id].append(sdp_swap) # we know the list exists already
-
                     else:
                         not_valid.status_code = SIPStatusCode.NOT_ACCEPTABLE
                         self._send_to_client(sock, str(not_valid).encode())
@@ -612,14 +552,12 @@ class SIPServer:
         """Removes calls with sockets that are inactive"""
         with self.call_lock:
             for call_id, call in self.active_calls:
-                if (datetime.datetime.now() - call.last_active) >= CALL_IDLE_LIMIT:
+                if (datetime.datetime.now() - call.last_active) >= CALL_IDLE_LIMIT and call.call_type != SIPCallState.IN_CALL:
                     del self.active_calls[call_id]
 
                     # if the call was register then we need to remove the invalid auth challenge
                     if call.uri in self.pending_auth:
                         del self.pending_auth[call.uri]
-                    if call_id in self.proxy_list:
-                        del self.proxy_list[call_id]
         time.sleep(30)
 
     def _keep_alive(self):
@@ -665,8 +603,6 @@ class SIPServer:
 
                     if call.uri in self.pending_auth:
                         del self.pending_auth[call.uri]
-                    if call_id in self.proxy_list:
-                        del self.proxy_list[call_id]
                     del self.active_calls[call_id]
 
         sock.close()
