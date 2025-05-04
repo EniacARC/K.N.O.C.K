@@ -24,6 +24,9 @@ REGISTER_LIMIT = 60
 REQUIRED_HEADERS = {'to', 'from', 'call-id', 'cseq', 'content-length'}
 KEEP_ALIVE_MSG = SIPMsgFactory.create_request(SIPMethod.OPTIONS, SIP_VERSION, "keep-alive", "keep-alive",
                                               "", "1")
+MAX_PASSES_META = 8000  # 8 kb
+MAX_PASSES_BODY = 100
+
 
 
 @dataclass
@@ -177,7 +180,8 @@ class SIPServer:
                         with self.conn_lock:
                             self.connected_users.append(client_sock)
                     else:
-                        msg = receive_tcp(sock)
+                        # returns sip msg object and checks is in format and in valid bounds
+                        msg = receive_tcp_sip(sock, MAX_PASSES_META, MAX_PASSES_BODY)
                         if msg:
                             self.thread_pool.submit(self._worker_process_msg, sock, msg)
                         else:
@@ -192,15 +196,14 @@ class SIPServer:
             self.server_socket.close()
 
     def _worker_process_msg(self, sock, msg):
-        sip_msg = SIPMsgFactory.parse(msg.decode())
-        if not sip_msg:
-            print("error! invalid sip msg - cannot respond")
-            return
-
-        if isinstance(sip_msg, SIPRequest):
-            self.process_request(sock, sip_msg)
+        # sip_msg = SIPMsgFactory.parse(msg.decode())
+        # if not sip_msg:
+        #     print("error! invalid sip msg - cannot respond")
+        #     return
+        if isinstance(msg, SIPRequest):
+            self.process_request(sock, msg)
         else:
-            self.process_request(sock, sip_msg)
+            self.process_request(sock, msg)
 
     def process_request(self, sock, req):
         not_valid = self._check_request_validly(req)
@@ -227,14 +230,16 @@ class SIPServer:
         if msg.version != SIP_VERSION:
             error_msg.status_code = SIPStatusCode.VERSION_NOT_SUPPORTED
             error_msg.version = SIP_VERSION
-        if REQUIRED_HEADERS.issubset(msg.headers):
+        elif REQUIRED_HEADERS.issubset(msg.headers):
             error_msg.status_code = SIPStatusCode.BAD_REQUEST
             missing = REQUIRED_HEADERS - msg.headers.keys()
             for header in missing:
                 error_msg.set_header(header, "missing")
-        if msg.get_header['cseq'][1] != msg.method.lower():
+        elif msg.get_header['cseq'][1] != msg.method.lower():
             error_msg.status_code = SIPStatusCode.BAD_REQUEST
             error_msg.set_header('cseq', [msg.get_header['cseq'][0], msg.method.lower()])
+        # elif len(msg.body) != msg.get_header('content-length'):
+        #     error_msg.status_code = SIPStatusCode.BAD_REQUEST
 
         if error_msg.status_code == SIPStatusCode.OK:
             return None
@@ -264,7 +269,7 @@ class SIPServer:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
                     return
-            # the call is in the correct state and can be canceled
+                    # the call is in the correct state and can be canceled
 
             # send ok response so the client knows I received. the canceling side must be the callee
             res_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.OK, SERVER_URI)
@@ -588,13 +593,16 @@ class SIPServer:
         if msg.version != SIP_VERSION:
             error_msg.status_code = SIPStatusCode.VERSION_NOT_SUPPORTED
             error_msg.version = SIP_VERSION
-        if REQUIRED_HEADERS.issubset(msg.headers):
+        elif REQUIRED_HEADERS.issubset(msg.headers):
             error_msg.status_code = SIPStatusCode.BAD_REQUEST
             missing = REQUIRED_HEADERS - msg.headers.keys()
             for header in missing:
                 error_msg.set_header(header, "missing")
-        if msg.status_code not in SIPStatusCode:
+        elif msg.status_code not in SIPStatusCode:
             error_msg.status_code = SIPStatusCode.BAD_REQUEST
+
+        # elif len(msg.body) != msg.get_header('content-length'):
+        #     error_msg.status_code = SIPStatusCode.BAD_REQUEST
 
         if error_msg.status_code == SIPStatusCode.OK:
             return None

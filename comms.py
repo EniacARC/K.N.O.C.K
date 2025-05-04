@@ -1,5 +1,8 @@
+import re
 import socket
 import struct
+
+from sip_msgs import *
 
 INT_SIZE = 4
 PACK_SIGN = "I"
@@ -68,3 +71,71 @@ def receive_tcp(sock):
     except socket.error as err:
         # print(f"error while recv: {err}")
         return b''
+
+
+def recv_sip_metadata(sock, max_passes):
+    """
+     receive metadata from the server
+
+     :param sock: the socket for communication
+     :type sock: socket.socket
+
+     :return: received metadata
+     :rtype: str
+     """
+    client_request = ""
+    passes = 0
+    try:
+        while not re.search('\r\n\r\n', client_request) and passes < MAX_PASSES:
+            passes += 1
+            packet = sock.recv(1).decode()
+            if packet == '':
+                client_request = ''
+                break
+            client_request += packet
+    except socket.error as err:
+        # logging.error(f"error while recv metadata: {err}")
+        client_request = ''
+    finally:
+        return client_request
+
+
+def recv_sip_body(sock, num, max_passes):
+    """
+     receive a constant-sized message from the server
+
+     :param sock: the socket for communication
+     :type sock: socket.socket
+
+     :param num: the size of the message to receive
+     :type num: int
+
+     :return: received message
+     :rtype: bytes
+     """
+    bod = b''
+    passes = 0
+    try:
+        while len(bod) < num and passes < max_passes:
+            passes += 1
+            chunk = sock.recv(num - len(bod))
+            if chunk == b'':
+                bod = b''
+                break
+            bod += chunk
+    except socket.error as err:
+        # logging.error(f"error while recv body: {err}")
+        bod = b''
+    finally:
+        return bod
+
+
+def receive_tcp_sip(sock, max_passes_metadata, max_passes_body):
+    metadata = recv_sip_metadata(sock, max_passes_metadata)
+    sip_msg = SIPMsgFactory.parse(metadata)
+    if sip_msg:
+        if sip_msg.get_header('content-length') != 0:
+            sip_msg.body = recv_sip_body(sock, sip_msg.get_header('content-length'), max_passes_body)
+            if len(sip_msg.body) == sip_msg.get_header('content-length'):
+                return sip_msg
+    return None
