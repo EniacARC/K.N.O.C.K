@@ -31,6 +31,18 @@ def send_tcp(sock, data):
         return False
 
 
+def send_sip_tcp(sock, data):
+    """data in bytes"""
+    try:
+        sent = 0
+        while sent < len(data):
+            sent += sock.send(data[sent:])
+        return True
+    except socket.error as err:
+        print(f"error while sending at: {err}")
+        return False
+
+
 def receive_tcp(sock):
     """
     Receive data over a TCP socket.
@@ -86,7 +98,7 @@ def recv_sip_metadata(sock, max_passes):
     client_request = ""
     passes = 0
     try:
-        while not re.search('\r\n\r\n', client_request) and passes < MAX_PASSES:
+        while not re.search('\r\n\r\n', client_request) and passes < max_passes:
             passes += 1
             packet = sock.recv(1).decode()
             if packet == '':
@@ -134,8 +146,10 @@ def receive_tcp_sip(sock, max_passes_metadata, max_passes_body):
     metadata = recv_sip_metadata(sock, max_passes_metadata)
     sip_msg = SIPMsgFactory.parse(metadata)
     if sip_msg:
-        if sip_msg.get_header('content-length') != 0:
+        if sip_msg.get_header('content-length') is not None and sip_msg.get_header('content-length') != 0:
             sip_msg.body = recv_sip_body(sock, sip_msg.get_header('content-length'), max_passes_body)
             if len(sip_msg.body) == sip_msg.get_header('content-length'):
                 return sip_msg
+        else:
+            return sip_msg
     return None

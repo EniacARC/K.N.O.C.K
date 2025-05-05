@@ -1,3 +1,4 @@
+import copy
 import random
 import re
 import string
@@ -28,7 +29,6 @@ class SIPCallState(Enum):
 
     INIT_CANCEL = "INIT CANCEL"
     TRYING_CANCEL = "TRYING CANCEL"
-
 
 
 class SIPCallType(Enum):
@@ -142,7 +142,7 @@ class SIPMsg(ABC):
                     # key_list = set(item.split(": ") for item in lines[1:])
                     empty_values = {value for value in value_set if value.strip() == ""}
                     # REQUIRED_HEADERS.issubset(key_set) and not
-                    if empty_values:
+                    if not empty_values:
                         return True
 
         except Exception as err:
@@ -160,25 +160,30 @@ class SIPMsg(ABC):
         if 'cseq' in self.headers:
             self.headers['cseq'] = self.headers['cseq'].split()
             self.headers['cseq'][0] = int(self.headers['cseq'][0])
+            self.headers['cseq'][1] = self.headers['cseq'][1].upper()
 
         if 'content-length' in self.headers:
             self.headers['content-length'] = int(self.headers['content-length'])
 
     def _build_headers(self):
+        headers_copy = copy.deepcopy(self.headers)
+
         try:
-            # transform <sip:uri> to uri
-            if 'to' in self.headers:
-                self.headers['to'] = self.headers['to'][1:-1].removeprefix("sip:")
-            if 'from' in self.headers:
-                self.headers['from'] = self.headers['from'][1:-1].removeprefix("sip:")
+            # transform uri to <sip:uri>
+            if 'to' in headers_copy:
+                headers_copy['to'] = "<sip:" + headers_copy['to'] + ">"
+            if 'from' in headers_copy:
+                headers_copy['from'] = "<sip:" + headers_copy['from'] + ">"
 
-            # transform "num METHOD" to (int(num), METHOD)
-            if 'cseq' in self.headers:
-                self.headers['cseq'] = self.headers['cseq'].split()
-                self.headers['cseq'][0] = int(self.headers['cseq'][0])
+            # transform (int(num), METHOD) to "num METHOD"
+            if 'cseq' in headers_copy:
+                headers_copy['cseq'][0] = str(headers_copy['cseq'][0])
+                headers_copy['cseq'] = " ".join(headers_copy['cseq'])
 
-            if 'content-length' in self.headers:
-                self.headers['content-length'] = int(self.headers['content-length'])
+            if 'content-length' in headers_copy:
+                headers_copy['content-length'] = int(headers_copy['content-length'])
+
+            return headers_copy
         except ValueError as err:
             print(err)
             return False
@@ -189,21 +194,24 @@ class SIPMsg(ABC):
             lines = headers_part.split("\r\n")
             self._parse_start_line(lines[0])
             self.headers = dict(item.lower().split(": ") for item in lines[1:])
-            return self._strip_essential_headers()
+            self._strip_essential_headers()
+            return True
         else:
             return False
 
     def __str__(self):
         if not self.can_build():
+            print("cannot build")
             return ""
         msg = self._build_start_line()
-        self._build_headers()
-        for key, value in self.headers:
-            msg += f"{key}: {value}\r\n"
-        msg += "\r\n"
-        if self.body:
-            msg += self.body
-        return msg
+        transformed_headers = self._build_headers()
+        if transformed_headers:
+            for key, value in transformed_headers.items():
+                msg += f"{key}: {value}\r\n"
+            msg += "\r\n"
+            if self.body:
+                msg += self.body
+            return msg
 
     # manage headers/body
     def set_header(self, key, value):
@@ -239,14 +247,15 @@ class SIPRequest(SIPMsg):
 
     def _build_start_line(self):
         if self.method and self.uri and self.version:
-            return f"{self.method} sip:{self.uri} {self.version}"
+            return f"{self.method} sip:{self.uri} {self.version}\r\n"
         return ""
 
     def can_build(self):
         if not self.method or not self.version or not self.uri:
             return False
-        if not set(self.headers.keys()).issubset(REQUIRED_HEADERS):
-            return False
+        # if not set(self.headers.keys()).issubset(REQUIRED_HEADERS):
+        #     return False
+        return True
 
 
 class SIPResponse(SIPMsg):
@@ -260,18 +269,22 @@ class SIPResponse(SIPMsg):
     def _parse_start_line(self, start_line):
         self.version, code, msg = start_line.split(" ", 2)
         code_num = int(code)
-        self.status_code = (code_num, msg)  # is not necessarily valid
+        for member in SIPStatusCode:
+            if member.value[0] == code_num:
+                self.status_code = member
 
     def _build_start_line(self):
         if self.status_code and self.version:
-            return f"{self.version} {self.status_code[0]} {self.status_code[1]}"
-        return ""
+            return f"{self.version} {self.status_code.value[0]} {self.status_code.value[1]}\r\n"
+        else:
+            return ""
 
     def can_build(self):
         if not self.status_code or not self.version:
             return False
-        if not set(self.headers.keys()).issubset(REQUIRED_HEADERS):
-            return False
+        # if not set(self.headers.keys()).issubset(REQUIRED_HEADERS):
+        #     return False
+        return True
 
 
 class SIPMsgFactory:
@@ -291,14 +304,15 @@ class SIPMsgFactory:
     @staticmethod
     def create_request(method, version, to_uri, from_uri, call_id, cseq, additional_headers=None, body=None):
         req_object = SIPRequest()
-        req_object.method = method
+        req_object.method = method.value
         req_object.uri = to_uri
         req_object.version = version
 
         req_object.set_header('to', to_uri)
         req_object.set_header('from', from_uri)
         req_object.set_header('call-id', call_id)
-        req_object.set_header('cseq', cseq + ' ' + method)
+        req_object.set_header('cseq', [cseq, method.value])
+        print(req_object.get_header('cseq'))
         if additional_headers:
             for key, value in additional_headers:
                 req_object.set_header(key, value)
@@ -307,9 +321,11 @@ class SIPMsgFactory:
         else:
             # default content-length value if not body
             req_object.set_header('content-length', 0)
+        return req_object
 
     @staticmethod
     def create_response_from_request(request, status_code, from_uri, additional_headers=None):
+        print("creating response")
         res_object = SIPResponse()
         res_object.status_code = status_code
         if additional_headers:
@@ -317,18 +333,20 @@ class SIPMsgFactory:
                 res_object.set_header(key, value)
 
         res_object.version = request.version
-        res_object.set_header('to', request.headers['to'])
+        res_object.set_header('to', request.headers['from'])
         res_object.set_header('from', from_uri)
         res_object.set_header('call-id', request.headers['call-id'])
-        res_object.set_header('cseq', request.headers['cseq'] + ' ' + request.method)
+        res_object.set_header('cseq', request.headers['cseq'])
+
         if request.body:
             res_object.set_body(request.body)
         else:
             # default content-length value if not body
             res_object.set_header('content-length', 0)
+        return res_object
 
     @staticmethod
-    def create_response(status_code, version, cseq, to_uri, from_uri, call_id, additional_headers=None):
+    def create_response(status_code, version, method, cseq, to_uri, from_uri, call_id, additional_headers=None):
         res_object = SIPResponse()
         res_object.status_code = status_code
         if additional_headers:
@@ -339,8 +357,9 @@ class SIPMsgFactory:
         res_object.set_header('to', to_uri)
         res_object.set_header('from', from_uri)
         res_object.set_header('call-id', call_id)
-        res_object.set_header('cseq', cseq)
+        res_object.set_header('cseq', [cseq, method.value])
         res_object.set_header('content-length', 0)  # assume this is for errors. no body needed
+        return res_object
 
 
 """
@@ -418,6 +437,6 @@ Max-Forwards: 70\r
 Expires: 3600\r
 \r\n"""
 msg1 = SIPRequest()
-print(msg1.can_parse(raw_invite))
-print(msg1.parse(raw_invite))
-print(msg1.method)
+# print(msg1.can_parse(raw_invite))
+# print(msg1.parse(raw_invite))
+# print(msg1.method)
