@@ -395,7 +395,7 @@ class SIPServer:
             call = None
             if call_id in self.active_calls:
                 call = self.active_calls[call_id]
-                if cseq != call.cseq + 1 or call.uri != uri_recv or call.method != req.method or call.method != SIPMethod.INVITE or sock is not call.caller_socket:
+                if cseq != call.last_used_cseq_num + 1 or call.uri != uri_recv or call.method != req.method.value or call.method != SIPMethod.INVITE or sock is not call.caller_socket:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
                     return
@@ -416,7 +416,7 @@ class SIPServer:
             # made sure the user is auth
             # make sure we can call the callee
             is_auth = False
-            auth_header = req.get_header('WWW-Authenticate')
+            auth_header = req.get_header('www-authenticate')
             user_recv = None
             with self.reg_lock:
                 user_recv = self.registered_user.get_by_val(uri_recv)
