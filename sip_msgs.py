@@ -17,6 +17,7 @@ class SIPMethod(Enum):
     ACK = "ACK"
     BYE = "BYE"
     OPTIONS = "OPTIONS"
+    CANCEL = "CANCEL"
 
 
 class SIPCallState(Enum):

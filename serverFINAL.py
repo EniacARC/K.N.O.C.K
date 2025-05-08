@@ -28,7 +28,7 @@ REQUIRED_HEADERS = {'to', 'from', 'call-id', 'cseq', 'content-length'}
 KEEP_ALIVE_MSG = SIPMsgFactory.create_request(SIPMethod.OPTIONS, SIP_VERSION, "keep-alive", "keep-alive",
                                               "", "1")
 MAX_PASSES_META = 8000  # 8 kb
-MAX_PASSES_BODY = 100
+MAX_PASSES_BODY = 1000
 
 
 @dataclass
