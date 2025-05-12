@@ -78,92 +78,92 @@ class AuthChallenge:
     created_time: datetime.datetime
 
 
-class ThreadPoolQueue:
-    def __init__(self, max_workers=10, thread_name_prefix="worker"):
-        self.max_workers = max_workers
-        self.thread_name_prefix = thread_name_prefix
-        self.task_queue = queue.Queue()
-        self.workers = []
-        self.running = False
-        self.lock = threading.RLock()  # For thread-safe operations
-
-    def start(self):
-        """Start the thread pool with worker threads."""
-        with self.lock:
-            if self.running:
-                return
-
-            self.running = True
-
-            # Create and start worker threads
-            for i in range(self.max_workers):
-                thread = threading.Thread(
-                    target=self._worker_loop,
-                    name=f"{self.thread_name_prefix}_{i}",
-                    daemon=True
-                )
-                self.workers.append(thread)
-                thread.start()
-                print(f"Started {thread.name}", flush=True)
-
-    def stop(self):
-        """Stop all worker threads."""
-        with self.lock:
-            self.running = False
-
-            # Clear the queue to unblock any waiting workers
-            while not self.task_queue.empty():
-                try:
-                    self.task_queue.get_nowait()
-                    self.task_queue.task_done()
-                except queue.Empty:
-                    break
-
-            # Wait for all workers to finish
-            for worker in self.workers:
-                if worker.is_alive():
-                    worker.join(timeout=1.0)
-
-            self.workers.clear()
-            print("All workers stopped", flush=True)
-
-    def submit(self, func, *args):
-        """Add a task to the queue."""
-        if not self.running:
-            raise RuntimeError("Thread pool is not running")
-
-        with self.lock:
-            self.task_queue.put((func, args))
-            return True
-
-    def _worker_loop(self):
-        """Worker thread main loop that processes tasks from the queue."""
-        thread_name = threading.current_thread().name
-        print(f"{thread_name} started and waiting for tasks", flush=True)
-
-        while self.running:
-            try:
-                # Get task with timeout to allow checking if we're still running
-                try:
-                    func, args = self.task_queue.get(timeout=0.5)
-                except queue.Empty:
-                    continue
-
-                # Process the task
-                try:
-                    print(f"{thread_name} processing task", flush=True)
-                    func(*args)
-                except Exception as e:
-                    print(f"Error in {thread_name}: {e}", flush=True)
-                    print(f"Error in {thread_name} while running {func.__name__} with args {args}: {e}", flush=True)
-                    traceback.print_exc()
-                finally:
-                    self.task_queue.task_done()
-
-            except Exception as e:
-                print(f"Unexpected error in worker loop of {thread_name}: {e}", flush=True)
-
-        print(f"{thread_name} shutting down", flush=True)
+# class ThreadPoolQueue:
+#     def __init__(self, max_workers=10, thread_name_prefix="worker"):
+#         self.max_workers = max_workers
+#         self.thread_name_prefix = thread_name_prefix
+#         self.task_queue = queue.Queue()
+#         self.workers = []
+#         self.running = False
+#         self.lock = threading.RLock()  # For thread-safe operations
+#
+#     def start(self):
+#         """Start the thread pool with worker threads."""
+#         with self.lock:
+#             if self.running:
+#                 return
+#
+#             self.running = True
+#
+#             # Create and start worker threads
+#             for i in range(self.max_workers):
+#                 thread = threading.Thread(
+#                     target=self._worker_loop,
+#                     name=f"{self.thread_name_prefix}_{i}",
+#                     daemon=True
+#                 )
+#                 self.workers.append(thread)
+#                 thread.start()
+#                 print(f"Started {thread.name}", flush=True)
+#
+#     def stop(self):
+#         """Stop all worker threads."""
+#         with self.lock:
+#             self.running = False
+#
+#             # Clear the queue to unblock any waiting workers
+#             while not self.task_queue.empty():
+#                 try:
+#                     self.task_queue.get_nowait()
+#                     self.task_queue.task_done()
+#                 except queue.Empty:
+#                     break
+#
+#             # Wait for all workers to finish
+#             for worker in self.workers:
+#                 if worker.is_alive():
+#                     worker.join(timeout=1.0)
+#
+#             self.workers.clear()
+#             print("All workers stopped", flush=True)
+#
+#     def submit(self, func, *args):
+#         """Add a task to the queue."""
+#         if not self.running:
+#             raise RuntimeError("Thread pool is not running")
+#
+#         with self.lock:
+#             self.task_queue.put((func, args))
+#             return True
+#
+#     def _worker_loop(self):
+#         """Worker thread main loop that processes tasks from the queue."""
+#         thread_name = threading.current_thread().name
+#         print(f"{thread_name} started and waiting for tasks", flush=True)
+#
+#         while self.running:
+#             try:
+#                 # Get task with timeout to allow checking if we're still running
+#                 try:
+#                     func, args = self.task_queue.get(timeout=0.5)
+#                 except queue.Empty:
+#                     continue
+#
+#                 # Process the task
+#                 try:
+#                     print(f"{thread_name} processing task", flush=True)
+#                     func(*args)
+#                 except Exception as e:
+#                     print(f"Error in {thread_name}: {e}", flush=True)
+#                     print(f"Error in {thread_name} while running {func.__name__} with args {args}: {e}", flush=True)
+#                     traceback.print_exc()
+#                 finally:
+#                     self.task_queue.task_done()
+#
+#             except Exception as e:
+#                 print(f"Unexpected error in worker loop of {thread_name}: {e}", flush=True)
+#
+#         print(f"{thread_name} shutting down", flush=True)
 
 
 class BiMap:

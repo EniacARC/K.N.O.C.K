@@ -144,4 +144,135 @@
 #             True if a frame is available, False otherwise.
 #         """
 #         return not self.frame_queue.empty()
-print("hello")
+import queue
+import random
+import socket
+import threading
+from RTP_msgs import *
+
+MAX_PACKET_SIZE = int(1500 / 8)
+
+
+class RTPHandler:
+
+    def __init__(self, send_ip, listen_port, send_port, msg_type):
+        self.send_ip = send_ip
+        self.listen_port = listen_port
+        self.send_port = send_port
+
+        self.msg_type = msg_type.value
+
+        self.send_lock = threading.Lock()
+        self.receive_lock = threading.Lock()
+
+        # RTPPacket objs
+        self.send_queue = queue.Queue()
+        self.receive_queue = queue.Queue()
+        self.recv_payload = None
+
+        self.running = False
+
+        # should be thread safe if 1 thread is reading only and one is writing only
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+        self.receive_thread = None
+        self.send_thread = None
+
+        self.my_seq = random.randint(0, 50000)
+        # self.ssrc = random.randint(0, 50000) # will be selected from the sending thread
+
+    def start(self, receive=False, send=False):
+        if self.running:
+            return
+
+        self.running = True
+
+        self.socket.bind((self.send_ip, self.send_port))
+        self.socket.settimeout(0.5)  # make sure we can check running flag
+
+        if receive:
+            self.receive_thread = threading.Thread(target=self._receive_loop)
+            self.receive_thread.start()
+        if send:
+            self.send_thread = threading.Thread(target=self._send_loop)
+            self.send_thread.start()
+        print(
+            f"RTP Handler started - Listening on port {self.listen_port}, sending to {self.send_ip}:{self.send_port}")
+
+    def stop(self):
+        """Stop the RTP handler threads"""
+        self.running = False
+        if self.receive_thread:
+            self.receive_thread.join(timeout=1.0)
+        if self.send_thread:
+            self.send_thread.join(timeout=1.0)
+        self.socket.close()
+        print("RTP Handler stopped")
+
+    def _send_loop(self):
+        """Thread function to send RTP packets"""
+        while self.running:
+            try:
+                # Try to get a packet from the queue with timeout
+                try:
+                    with self.send_lock:
+                        packet = self.send_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+
+                # the sequence number is not controlled by the high logic but by transport logic, so it belongs here.
+                packet.sequence_number = self.my_seq
+                # if packet is bigger than mmu split packet
+                data = packet.build_packet()
+                if self.msg_type == PacketType.VIDEO.value and len(data) > MAX_PACKET_SIZE:
+                    max_payload_size = MAX_PACKET_SIZE - len(packet.payload)
+                    payloads = [packet.payload[i:i + max_payload_size] for i in range(0, len(data), max_payload_size)]
+                    for payload in payloads:
+                        packet.payload = payload
+                        data = packet.build_packet()
+                        self.socket.sendto(data, (self.send_ip, self.send_port))
+                        self.my_seq += 1
+                        packet.sequence_number += 1
+                else:
+                    self.socket.sendto(data, (self.send_ip, self.send_port))
+                    self.my_seq += 1
+                # self.send_queue.task_done() ??
+            except Exception as e:
+                print(f"Error in send loop: {e}")
+
+    def _receive_loop(self):
+        """Thread function to receive RTP packets"""
+        while self.running:
+            try:
+                # Set a timeout so we can check running flag periodically
+                self.socket.settimeout(0.5)
+
+                try:
+                    data, addr = self.socket.recvfrom(MAX_PACKET_SIZE)  # Max UDP packet size
+                except socket.timeout:
+                    continue
+
+                # Parse the received packet
+                packet = RTPPacket()
+                if packet.decode_packet(data):
+                    if self.msg_type == PacketType.VIDEO.value:
+                        # if data is fragmented continue to add until whole. if timestamps don't match throw prev packet
+                        if self.recv_payload and self.recv_payload.timestamp != packet.timestamp:
+                            if packet.marker:
+                                self.recv_payload = None
+                                with self.receive_lock:
+                                    self.receive_queue.put(packet)
+                            else:
+                                self.recv_payload = packet
+                        if self.recv_payload:
+                            if packet.marker:
+                                self.recv_payload = None
+                                with self.receive_lock:
+                                    self.receive_queue.put(packet)
+                            else:
+                                self.recv_payload.payload += packet.payload
+                    else:
+                        with self.receive_lock:
+                            self.receive_queue.put(packet)
+            except Exception as e:
+                print(f"Error in receive loop: {e}")
