@@ -228,14 +228,33 @@ class RTPHandler:
                 data = packet.build_packet()
                 if self.msg_type == PacketType.VIDEO.value and len(data) > MAX_PACKET_SIZE:
                     print("too big!")
-                    max_payload_size = MAX_PACKET_SIZE - len(packet.payload)
-                    payloads = [packet.payload[i:i + max_payload_size] for i in range(0, len(data), max_payload_size)]
-                    for payload in payloads:
+                    packet.marker = False
+                    payload_all = packet.payload
+                    packet.payload = b''
+                    header_size = len(packet.build_packet())
+                    # Set the max payload size that ensures the full packet stays within limit
+                    max_payload_size = MAX_PACKET_SIZE - header_size
+                    # print(max_payload_size)
+
+                    # Split the payload into safe-sized chunks
+                    payloads = [payload_all[i:i + max_payload_size] for i in range(0, len(payload_all), max_payload_size)]
+                    print(payloads)
+
+                    for payload in payloads[:-1]:  # All except the last
                         packet.payload = payload
+                        packet.marker = False
                         data = packet.build_packet()
                         self.socket.sendto(data, (self.send_ip, self.send_port))
                         self.my_seq += 1
                         packet.sequence_number += 1
+
+                    # Send the last payload with marker = True
+                    packet.payload = payloads[-1]
+                    packet.marker = True
+                    data = packet.build_packet()
+                    self.socket.sendto(data, (self.send_ip, self.send_port))
+                    self.my_seq += 1
+                    packet.sequence_number += 1
                 else:
                     print(f"sending: {data} to {self.send_ip}:{self.send_port}")
                     self.socket.sendto(data, (self.send_ip, self.send_port))
