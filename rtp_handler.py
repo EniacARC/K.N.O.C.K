@@ -187,7 +187,7 @@ class RTPHandler:
 
         self.running = True
 
-        self.socket.bind((self.send_ip, self.send_port))
+        self.socket.bind(('0.0.0.0', self.listen_port))
         self.socket.settimeout(0.5)  # make sure we can check running flag
 
         if receive:
