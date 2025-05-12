@@ -181,7 +181,7 @@ class RTPHandler:
         self.my_seq = random.randint(0, 50000)
         # self.ssrc = random.randint(0, 50000) # will be selected from the sending thread
 
-    def start(self, receive=False, send=False):
+    def start(self, receive, send):
         if self.running:
             return
 
@@ -212,11 +212,13 @@ class RTPHandler:
     def _send_loop(self):
         """Thread function to send RTP packets"""
         while self.running:
+            # print("running!")
             try:
                 # Try to get a packet from the queue with timeout
                 try:
                     with self.send_lock:
                         packet = self.send_queue.get(timeout=0.5)
+                        print(packet)
                 except queue.Empty:
                     continue
 
@@ -225,6 +227,7 @@ class RTPHandler:
                 # if packet is bigger than mmu split packet
                 data = packet.build_packet()
                 if self.msg_type == PacketType.VIDEO.value and len(data) > MAX_PACKET_SIZE:
+                    print("too big!")
                     max_payload_size = MAX_PACKET_SIZE - len(packet.payload)
                     payloads = [packet.payload[i:i + max_payload_size] for i in range(0, len(data), max_payload_size)]
                     for payload in payloads:
@@ -234,6 +237,7 @@ class RTPHandler:
                         self.my_seq += 1
                         packet.sequence_number += 1
                 else:
+                    print(f"sending: {data} to {self.send_ip}:{self.send_port}")
                     self.socket.sendto(data, (self.send_ip, self.send_port))
                     self.my_seq += 1
                 # self.send_queue.task_done() ??
@@ -256,21 +260,29 @@ class RTPHandler:
                 packet = RTPPacket()
                 if packet.decode_packet(data):
                     if self.msg_type == PacketType.VIDEO.value:
-                        # if data is fragmented continue to add until whole. if timestamps don't match throw prev packet
                         if self.recv_payload and self.recv_payload.timestamp != packet.timestamp:
-                            if packet.marker:
-                                self.recv_payload = None
-                                with self.receive_lock:
-                                    self.receive_queue.put(packet)
-                            else:
-                                self.recv_payload = packet
-                        if self.recv_payload:
-                            if packet.marker:
-                                self.recv_payload = None
-                                with self.receive_lock:
-                                    self.receive_queue.put(packet)
-                            else:
+                            # Timestamp mismatch: discard previous fragment
+                            self.recv_payload = None
+                        if packet.marker:
+                            if self.recv_payload:
+                                # if it's not none then timestamps must match
                                 self.recv_payload.payload += packet.payload
+                                with self.receive_lock:
+                                    self.receive_queue.put(self.recv_payload)
+                                self.recv_payload = None
+                            else:
+                                # No ongoing fragment or mismatch, queue this as a full packet
+                                with self.receive_lock:
+                                    self.receive_queue.put(packet)
+                        else:
+                            # Intermediate fragment
+                            if self.recv_payload:
+                                # if it's not none then timestamps must match
+                                # Continue building the current payload
+                                self.recv_payload.payload += packet.payload
+                            else:
+                                # Start a new fragmented payload
+                                self.recv_payload = packet
                     else:
                         with self.receive_lock:
                             self.receive_queue.put(packet)
