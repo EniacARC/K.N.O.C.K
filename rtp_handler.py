@@ -148,9 +148,11 @@ import queue
 import random
 import socket
 import threading
+import time
+
 from RTP_msgs import *
 
-MAX_PACKET_SIZE = int(1500 / 8)
+MAX_PACKET_SIZE = int(1500)
 
 
 class RTPHandler:
@@ -214,13 +216,24 @@ class RTPHandler:
         while self.running:
             # print("running!")
             try:
+                # if not q.empty():
+                #     value = q.get()
+                #     print(f"Consumed: {value}")
+                # else:
+                #     time.sleep(0.1)  # Avoid busy waiting
+
                 # Try to get a packet from the queue with timeout
-                try:
-                    with self.send_lock:
-                        packet = self.send_queue.get(timeout=0.5)
-                        print(packet)
-                except queue.Empty:
-                    continue
+                # try:
+                with self.send_lock:
+                    if not self.send_queue.empty():
+                        packet = self.send_queue.get(timeout=0.1)
+                        print("not empty:")
+                    else:
+                        continue
+
+                # except queue.Empty:
+                #     # time.sleep(1)
+                #     continue
 
                 # the sequence number is not controlled by the high logic but by transport logic, so it belongs here.
                 packet.sequence_number = self.my_seq
@@ -237,7 +250,8 @@ class RTPHandler:
                     # print(max_payload_size)
 
                     # Split the payload into safe-sized chunks
-                    payloads = [payload_all[i:i + max_payload_size] for i in range(0, len(payload_all), max_payload_size)]
+                    payloads = [payload_all[i:i + max_payload_size] for i in
+                                range(0, len(payload_all), max_payload_size)]
                     print(payloads)
 
                     for payload in payloads[:-1]:  # All except the last
@@ -254,7 +268,6 @@ class RTPHandler:
                     data = packet.build_packet()
                     self.socket.sendto(data, (self.send_ip, self.send_port))
                     self.my_seq += 1
-                    packet.sequence_number += 1
                 else:
                     print(f"sending: {data} to {self.send_ip}:{self.send_port}")
                     self.socket.sendto(data, (self.send_ip, self.send_port))
@@ -272,6 +285,7 @@ class RTPHandler:
 
                 try:
                     data, addr = self.socket.recvfrom(MAX_PACKET_SIZE)  # Max UDP packet size
+                    # time.sleep(0.1)
                 except socket.timeout:
                     continue
 
@@ -287,6 +301,7 @@ class RTPHandler:
                                 # if it's not none then timestamps must match
                                 self.recv_payload.payload += packet.payload
                                 with self.receive_lock:
+                                    print("putting")
                                     self.receive_queue.put(self.recv_payload)
                                 self.recv_payload = None
                             else:
