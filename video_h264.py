@@ -422,6 +422,299 @@ import av
 # if __name__ == "__main__":
 #     main()
 
+# ------------------------------------------
+#uses threads for speed
+# ~20fps but can't connect in the middle?
+
+# import cv2
+# import time
+# import av
+# import threading
+# import queue
+# from fractions import Fraction
+# from RTP_msgs import RTPPacket, PacketType
+# from rtp_handler import RTPHandler
+#
+# # Configuration
+# SEND_IP = "127.0.0.1"  # Destination IP
+# LISTEN_PORT = 5006  # Port to listen on
+# SEND_PORT = 2432  # Port to send RTP packets to
+# TARGET_FPS = 30  # Target framerate
+# WIDTH = 680  # Video width (reduced for performance)
+# HEIGHT = 640  # Video height (reduced for performance)
+# JPEG_QUALITY = 80  # JPEG compression quality (1-100)
+#
+#
+# class EncoderThread(threading.Thread):
+#     def __init__(self, frame_queue, packet_queue):
+#         threading.Thread.__init__(self)
+#         self.frame_queue = frame_queue
+#         self.packet_queue = packet_queue
+#         self.running = True
+#         self.frame_count = 0
+#
+#         # Initialize encoder
+#         self.output_codec = 'h264'
+#         self.encoder = av.codec.CodecContext.create(self.output_codec, 'w')
+#         self.encoder.width = WIDTH
+#         self.encoder.height = HEIGHT
+#         self.encoder.pix_fmt = 'yuv420p'
+#         self.encoder.time_base = Fraction(1, TARGET_FPS)
+#         self.encoder.options = {
+#             'tune': 'zerolatency',
+#             'preset': 'ultrafast',
+#             'profile': 'baseline',  # Use baseline profile for compatibility
+#             'g': '30',  # GOP size: I-frame every 15 frames
+#             'bf': '0',  # No B-frames
+#             'flags': '+cgop',  # Closed GOP
+#             'rc_lookahead': '0',  # No lookahead
+#             'crf': '30',  # Constant Rate Factor - higher value = lower quality/size
+#             'threads': '4'  # Use multiple threads
+#         }
+#
+#     def run(self):
+#         print("Encoder thread started")
+#         try:
+#             while self.running:
+#                 try:
+#                     # Get frame with a timeout
+#                     frame = self.frame_queue.get(timeout=0.5)
+#
+#                     # Convert to PyAV frame
+#                     av_frame = av.VideoFrame.from_ndarray(frame, format='bgr24')
+#                     av_frame = av_frame.reformat(format='yuv420p')
+#                     av_frame.pts = self.frame_count
+#
+#                     # Encode frame
+#                     packets = self.encoder.encode(av_frame)
+#                     for packet in packets:
+#                         payload = bytes(packet)
+#
+#                         # Create RTP packet
+#                         rtp_packet = RTPPacket(
+#                             payload_type=PacketType.VIDEO.value,
+#                             marker=True,
+#                             timestamp=int(self.frame_count * (90000 / TARGET_FPS))
+#                         )
+#                         rtp_packet.payload = payload
+#
+#                         # Add to packet queue
+#                         try:
+#                             self.packet_queue.put_nowait(rtp_packet)
+#                         except queue.Full:
+#                             pass  # Drop if queue is full
+#
+#                     self.frame_count += 1
+#
+#                 except queue.Empty:
+#                     continue  # No frame available
+#         except Exception as e:
+#             print(f"Encoder thread error: {e}")
+#         finally:
+#             print("Encoder thread stopped")
+#             self.encoder.close()
+#
+#     def stop(self):
+#         self.running = False
+#         self.join(timeout=1.0)
+#
+#
+# class JPEGEncoderThread(threading.Thread):
+#     def __init__(self, frame_queue, packet_queue):
+#         threading.Thread.__init__(self)
+#         self.frame_queue = frame_queue
+#         self.packet_queue = packet_queue
+#         self.running = True
+#         self.frame_count = 0
+#
+#     def run(self):
+#         print("JPEG encoder thread started")
+#         try:
+#             while self.running:
+#                 try:
+#                     # Get frame with a timeout
+#                     frame = self.frame_queue.get(timeout=0.5)
+#
+#                     # Encode as JPEG (much faster than H.264)
+#                     encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
+#                     result, jpeg_data = cv2.imencode('.jpg', frame, encode_param)
+#
+#                     if result:
+#                         # Create RTP packet
+#                         rtp_packet = RTPPacket(
+#                             payload_type=PacketType.VIDEO.value,
+#                             marker=True,
+#                             timestamp=int(self.frame_count * (90000 / TARGET_FPS))
+#                         )
+#                         rtp_packet.payload = jpeg_data.tobytes()
+#
+#                         # Add to packet queue
+#                         try:
+#                             self.packet_queue.put_nowait(rtp_packet)
+#                         except queue.Full:
+#                             pass  # Drop if queue is full
+#
+#                     self.frame_count += 1
+#
+#                 except queue.Empty:
+#                     continue  # No frame available
+#         except Exception as e:
+#             print(f"JPEG encoder thread error: {e}")
+#         finally:
+#             print("JPEG encoder thread stopped")
+#
+#     def stop(self):
+#         self.running = False
+#         self.join(timeout=1.0)
+#
+#
+# class SenderThread(threading.Thread):
+#     def __init__(self, packet_queue, sender):
+#         threading.Thread.__init__(self)
+#         self.packet_queue = packet_queue
+#         self.sender = sender
+#         self.running = True
+#         self.packets_sent = 0
+#         self.start_time = time.time()
+#
+#     def run(self):
+#         print("Sender thread started")
+#         try:
+#             while self.running:
+#                 try:
+#                     # Get packet with a timeout
+#                     packet = self.packet_queue.get(timeout=0.5)
+#
+#                     # Send packet
+#                     with self.sender.send_lock:
+#                         self.sender.send_queue.put_nowait(packet)
+#
+#                     self.packets_sent += 1
+#
+#                     # Print statistics every second
+#                     elapsed = time.time() - self.start_time
+#                     if elapsed >= 1.0:
+#                         print(
+#                             f"Sent {self.packets_sent} packets in {elapsed:.2f}s ({self.packets_sent / elapsed:.2f} packets/s)")
+#                         self.packets_sent = 0
+#                         self.start_time = time.time()
+#
+#                 except queue.Empty:
+#                     continue  # No packet available
+#         except Exception as e:
+#             print(f"Sender thread error: {e}")
+#         finally:
+#             print("Sender thread stopped")
+#
+#     def stop(self):
+#         self.running = False
+#         self.join(timeout=1.0)
+#
+#
+# def main():
+#     # Create queues
+#     frame_queue = queue.Queue(maxsize=10)  # Small queue to avoid latency
+#     packet_queue = queue.Queue(maxsize=30)
+#
+#     # Open webcam with OpenCV
+#     cap = cv2.VideoCapture(0)  # Change index if needed
+#
+#     # Set camera properties
+#     cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
+#     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
+#     cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
+#
+#     # Get actual camera properties (may differ from requested)
+#     actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+#     actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+#     actual_fps = cap.get(cv2.CAP_PROP_FPS)
+#     print(f"Camera: {actual_width}x{actual_height} @ {actual_fps} FPS")
+#
+#     # Initialize RTP sender
+#     sender = RTPHandler(send_ip=SEND_IP, listen_port=LISTEN_PORT, send_port=SEND_PORT, msg_type=PacketType.VIDEO)
+#     sender.start(receive=False, send=True)
+#
+#     # Choose encoder based on performance needs
+#     use_jpeg = True  # JPEG is much faster than H.264, switch to False if you need H.264
+#
+#     # Create and start threads
+#     if use_jpeg:
+#         encoder_thread = JPEGEncoderThread(frame_queue, packet_queue)
+#     else:
+#         encoder_thread = EncoderThread(frame_queue, packet_queue)
+#
+#     sender_thread = SenderThread(packet_queue, sender)
+#
+#     encoder_thread.start()
+#     sender_thread.start()
+#
+#     # Frame rate control variables
+#     frame_time = 1.0 / TARGET_FPS  # Time per frame in seconds
+#     next_frame_time = time.time()  # Time when next frame should be processed
+#
+#     # Statistics variables
+#     stats_start_time = time.time()
+#     frame_count = 0
+#
+#     try:
+#         print(f"Starting video stream at {TARGET_FPS} FPS...")
+#
+#         while True:
+#             try:
+#                 # Capture frame without waiting for timing
+#                 ret, frame = cap.read()
+#                 if not ret:
+#                     print("Failed to capture frame, retrying...")
+#                     time.sleep(0.01)
+#                     continue
+#
+#                 # Add frame to queue for processing (non-blocking)
+#                 try:
+#                     frame_queue.put_nowait(frame)
+#                     frame_count += 1
+#                 except queue.Full:
+#                     # If queue is full, drop this frame
+#                     pass
+#
+#                 # Track FPS
+#                 current_time = time.time()
+#                 elapsed = current_time - stats_start_time
+#                 if elapsed >= 1.0:
+#                     fps = frame_count / elapsed
+#                     print(f"Capturing at {fps:.2f} FPS (target: {TARGET_FPS})")
+#                     frame_count = 0
+#                     stats_start_time = current_time
+#
+#                 # Wait just enough to maintain frame rate, if we're ahead of schedule
+#                 wait_time = next_frame_time - time.time()
+#                 if wait_time > 0:
+#                     time.sleep(wait_time)
+#
+#                 # Schedule next frame
+#                 next_frame_time = time.time() + frame_time
+#
+#             except KeyboardInterrupt:
+#                 break
+#             except Exception as e:
+#                 print(f"Error in main loop: {e}")
+#
+#     finally:
+#         # Clean up
+#         print("Stopping stream and releasing resources...")
+#         encoder_thread.stop()
+#         sender_thread.stop()
+#         cap.release()
+#         sender.stop()
+#         print("Stream stopped.")
+#
+#
+# if __name__ == "__main__":
+#     main()
+#
+# if __name__ == "__main__":
+#     main()
+# ------------------------------------------
+
 import cv2
 import time
 from RTP_msgs import RTPPacket, PacketType
@@ -481,7 +774,9 @@ def main():
         'keyint_min': '30',  # Min: 1 I-frame every 30 frames
         'bf': '0',         # NO B-frames
         'flags': '+cgop',  # Closed GOP (optional, improves error resilience)
-        'rc_lookahead': '0'  # Disable rate control lookahead for lower latency
+        'rc_lookahead': '0',  # Disable rate control lookahead for lower latency
+        'me': 'dia'
+        # 'crf': '30',  # Constant Rate Factor - higher value = lower quality/size
     }
 
     start = time.time()

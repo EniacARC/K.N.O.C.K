@@ -363,6 +363,9 @@ def receiver_main():
     decoder.options = {
         'tune': 'zerolatency',
         'preset': 'ultrafast',
+        'threads': 'auto',
+        'fast': '1',
+        'max_delay': '0'
     }
     decoder.pix_fmt = 'yuv420p'
     receiver = RTPHandler(send_ip='127.0.0.1', listen_port=2432, send_port=5006, msg_type=PacketType.VIDEO)
