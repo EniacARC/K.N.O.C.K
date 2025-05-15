@@ -1,3 +1,218 @@
+#
+# import cv2
+# import time
+# import numpy as np
+# import random
+# import subprocess
+# from RTP_msgs import RTPPacket, PacketType
+# from rtp_handler import RTPHandler
+#
+# import threading
+# import queue
+#
+# # Configuration
+# SEND_IP = "127.0.0.1"
+# LISTEN_PORT = 5006
+# SEND_PORT = 2432
+# FRAME_RATE = 30
+# WIDTH, HEIGHT = 640, 480
+# MAX_PACKET_SIZE = 1400  # Bytes, respecting MTU
+#
+# def create_ffmpeg_encoder():
+#     """Create a persistent FFmpeg process for H.264 encoding."""
+#     cmd = [
+#         'ffmpeg',
+#         '-f', 'rawvideo',
+#         '-pix_fmt', 'rgb24',
+#         '-s', f'{WIDTH}x{HEIGHT}',
+#         '-r', str(FRAME_RATE),
+#         '-i', 'pipe:',
+#         '-c:v', 'libx264',
+#         '-preset', 'ultrafast',
+#         '-tune', 'zerolatency',
+#         '-crf', '23',
+#         '-threads', '4',
+#         '-f', 'h264',
+#         'pipe:'
+#     ]
+#     process = subprocess.Popen(
+#         cmd,
+#         stdin=subprocess.PIPE,
+#         stdout=subprocess.PIPE,
+#         stderr=subprocess.PIPE,
+#         bufsize=10**8
+#     )
+#     return process
+#
+# def fragment_nal_units(h264_data, max_packet_size):
+#     """Fragment H.264 NAL units into RTP payloads."""
+#     packets = []
+#     start = 0
+#     while start < len(h264_data):
+#         if start + 3 >= len(h264_data):
+#             break
+#         if h264_data[start:start+3] == b'\x00\x00\x01':
+#             nal_start = start
+#             start += 3
+#         elif start + 4 < len(h264_data) and h264_data[start:start+4] == b'\x00\x00\x00\x01':
+#             nal_start = start
+#             start += 4
+#         else:
+#             start += 1
+#             continue
+#
+#         next_nal = len(h264_data)
+#         for i in range(start, len(h264_data) - 3):
+#             if h264_data[i:i+3] == b'\x00\x00\x01':
+#                 next_nal = i
+#                 break
+#             if i + 1 < len(h264_data) - 3 and h264_data[i:i+4] == b'\x00\x00\x00\x01':
+#                 next_nal = i
+#                 break
+#
+#         nal_unit = h264_data[nal_start:next_nal]
+#         nal_size = len(nal_unit)
+#
+#         if nal_size <= max_packet_size - 2:
+#             packets.append(nal_unit)
+#         else:
+#             nal_type = nal_unit[nal_start+3 if nal_start+3 < len(nal_unit) else 0] & 0x1F
+#             fu_payload = nal_unit[nal_start+4 if nal_start+4 < len(nal_unit) else nal_start+3:]
+#             offset = 0
+#             while offset < len(fu_payload):
+#                 chunk_size = min(max_packet_size - 3, len(fu_payload) - offset)
+#                 fu_indicator = (0x1C << 3) | (nal_type & 0x1F)
+#                 fu_header = 0
+#                 if offset == 0:
+#                     fu_header |= 0x80
+#                 if offset + chunk_size >= len(fu_payload):
+#                     fu_header |= 0x40
+#                 fu_header |= (nal_type & 0x1F)
+#                 packet = bytearray([fu_indicator, fu_header]) + fu_payload[offset:offset+chunk_size]
+#                 packets.append(bytes(packet))
+#                 offset += chunk_size
+#
+#         start = next_nal
+#
+#     return packets
+#
+#
+# def reader_thread(stdout, output_queue):
+#     while True:
+#         chunk = stdout.read(4096)
+#         if not chunk:
+#             break
+#         output_queue.put(chunk)
+#     output_queue.put(None)  # Signal EOF
+#
+# def main():
+#
+#     # Initialize webcam
+#     cap = cv2.VideoCapture(0)
+#     cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
+#     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
+#     cap.set(cv2.CAP_PROP_FPS, FRAME_RATE)
+#
+#     if not cap.isOpened():
+#         print("Error: Could not open webcam")
+#         return
+#
+#     # Initialize encoder
+#     encoder = create_ffmpeg_encoder()
+#     output_queue = queue.Queue()
+#     thread = threading.Thread(target=reader_thread, args=(encoder.stdout, output_queue))
+#     thread.daemon = True
+#     thread.start()
+#
+#     # Initialize RTPHandler
+#     rtp_handler = RTPHandler(
+#         send_ip=SEND_IP,
+#         listen_port=LISTEN_PORT,
+#         send_port=SEND_PORT,
+#         msg_type=PacketType.VIDEO
+#     )
+#     rtp_handler.start(receive=False, send=True)
+#
+#     # RTP parameters
+#     clock_rate = 90000
+#     start_time = time.time()
+#     seq_num = 0
+#     ssrc = random.randint(0, 4294967295)
+#
+#     # FPS tracking
+#     fps_frame_count = 0
+#     fps_start_time = time.time()
+#
+#     try:
+#         while True:
+#             ret, frame = cap.read()
+#             if not ret:
+#                 print("Error: Failed to capture frame")
+#                 continue
+#
+#             # Convert BGR to RGB
+#             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+#
+#             # Write frame to FFmpeg stdin
+#             encoder.stdin.write(frame_rgb.tobytes())
+#             encoder.stdin.flush()
+#
+#             # Read encoded data from FFmpeg stdout
+#             packets = []
+#             while True:
+#                 try:
+#                     chunk = output_queue.get_nowait()
+#                 except queue.Empty:
+#                     # No data available right now — do other work, then try again later
+#                     break
+#                 if chunk is None:
+#                     # EOF reached
+#                     break
+#                 packets.extend(fragment_nal_units(chunk, MAX_PACKET_SIZE))
+#
+#             # Send RTP packets
+#             timestamp = int((time.time() - start_time) * clock_rate)
+#             for i, payload in enumerate(packets):
+#                 rtp_packet = RTPPacket()
+#                 print(rtp_packet)
+#                 rtp_packet.payload = payload
+#                 rtp_packet.timestamp = timestamp
+#                 rtp_packet.seq_num = seq_num
+#                 rtp_packet.marker = (i == len(packets) - 1)
+#                 rtp_packet.ssrc = ssrc
+#                 rtp_packet.payload_type = PacketType.VIDEO.value
+#
+#                 try:
+#                     with rtp_handler.send_lock:
+#                         rtp_handler.send_queue.put(rtp_packet)
+#                 except:
+#                     pass
+#
+#                 seq_num = (seq_num + 1) % 65536
+#
+#             # FPS calculation
+#             fps_frame_count += 1
+#             current_time = time.time()
+#             if current_time - fps_start_time >= 1.0:
+#                 fps = fps_frame_count / (current_time - fps_start_time)
+#                 print(f"Encoding FPS: {fps:.2f}")
+#                 fps_frame_count = 0
+#                 fps_start_time = current_time
+#
+#             time.sleep(1 / FRAME_RATE)
+#
+#     except KeyboardInterrupt:
+#         print("Stopping sender...")
+#     finally:
+#         cap.release()
+#         encoder.stdin.close()
+#         encoder.stdout.close()
+#         encoder.terminate()
+#         rtp_handler.stop()
+#
+# if __name__ == "__main__":
+#     main()
+
 # import av
 # import cv2
 # import numpy as np

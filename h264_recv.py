@@ -363,7 +363,6 @@ def receiver_main():
     decoder.options = {
         'tune': 'zerolatency',
         'preset': 'ultrafast',
-        'threads': 'auto',
         'fast': '1',
         'max_delay': '0'
     }
