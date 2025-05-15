@@ -227,7 +227,6 @@ class RTPHandler:
                 with self.send_lock:
                     if not self.send_queue.empty():
                         packet = self.send_queue.get(timeout=0.1)
-                        print("not empty:")
                     else:
                         continue
 
@@ -240,7 +239,8 @@ class RTPHandler:
                 # if packet is bigger than mmu split packet
                 data = packet.build_packet()
                 if self.msg_type == PacketType.VIDEO.value and len(data) > MAX_PACKET_SIZE:
-                    print("too big!")
+                    # print("too big!")
+                    # print(packet)
                     packet.marker = False
                     payload_all = packet.payload
                     packet.payload = b''
@@ -252,7 +252,7 @@ class RTPHandler:
                     # Split the payload into safe-sized chunks
                     payloads = [payload_all[i:i + max_payload_size] for i in
                                 range(0, len(payload_all), max_payload_size)]
-                    print(payloads)
+                    # print(len(payloads))
 
                     for payload in payloads[:-1]:  # All except the last
                         packet.payload = payload
@@ -285,13 +285,13 @@ class RTPHandler:
 
                 try:
                     data, addr = self.socket.recvfrom(MAX_PACKET_SIZE)  # Max UDP packet size
-                    # time.sleep(0.1)
                 except socket.timeout:
                     continue
 
                 # Parse the received packet
                 packet = RTPPacket()
                 if packet.decode_packet(data):
+                #     print(packet)
                     if self.msg_type == PacketType.VIDEO.value:
                         if self.recv_payload and self.recv_payload.timestamp != packet.timestamp:
                             # Timestamp mismatch: discard previous fragment
@@ -301,7 +301,7 @@ class RTPHandler:
                                 # if it's not none then timestamps must match
                                 self.recv_payload.payload += packet.payload
                                 with self.receive_lock:
-                                    print("putting")
+                                    print(f"putting {self.recv_payload}")
                                     self.receive_queue.put(self.recv_payload)
                                 self.recv_payload = None
                             else:

@@ -477,9 +477,15 @@ def main():
     encoder.options = {
         'tune': 'zerolatency',
         'preset': 'ultrafast',
-        'g': '1'  # GOP size of 1: all frames are I-frames
+        'g': '30',  # GOP size of 1: all frames are I-frames
+        'keyint_min': '30',  # Min: 1 I-frame every 30 frames
+        'bf': '0',         # NO B-frames
+        'flags': '+cgop',  # Closed GOP (optional, improves error resilience)
+        'rc_lookahead': '0'  # Disable rate control lookahead for lower latency
     }
 
+    start = time.time()
+    i = 0
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -492,6 +498,10 @@ def main():
         # Encode
         packets = encoder.encode(av_frame)
         for pack in packets:
+            if time.time() - start >= 1:
+                print(i)
+                start = time.time()
+                i = 0
             payload = bytes(pack)
             # Create RTP packet
             pkt = RTPPacket(
@@ -502,7 +512,8 @@ def main():
 
             with sender.send_lock:
                 sender.send_queue.put(pkt)
-    cap.release()
+            i += 1
+
 
 
 main()

@@ -247,6 +247,8 @@
 # #         asyncio.run(receive_encoded_video())
 # #     except KeyboardInterrupt:
 # #         print("Interrupted by user.")
+from fractions import Fraction
+
 import av
 # import cv2
 # import queue
@@ -358,6 +360,11 @@ from rtp_handler import RTPHandler
 
 def receiver_main():
     decoder = av.codec.CodecContext.create('h264', 'r')
+    decoder.options = {
+        'tune': 'zerolatency',
+        'preset': 'ultrafast',
+    }
+    decoder.pix_fmt = 'yuv420p'
     receiver = RTPHandler(send_ip='127.0.0.1', listen_port=2432, send_port=5006, msg_type=PacketType.VIDEO)
     receiver.start(receive=True, send=False)
 
@@ -367,15 +374,20 @@ def receiver_main():
                 pkt = receiver.receive_queue.get()
                 img_data = pkt.payload
 
-                packet = av.Packet(img_data)
+                try:
+                    packet = av.Packet(img_data)
 
-                frames = decoder.decode(packet)
-                for frame in frames:
-                    img = frame.to_ndarray(format='bgr24')
-                    cv2.imshow('UDP Decoded Video', img)
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        cv2.destroyAllWindows()
-                        return
+                    frames = decoder.decode(packet)
+                    for frame in frames:
+                        img = frame.to_ndarray(format='bgr24')
+                        cv2.imshow('UDP Decoded Video', img)
+                        if cv2.waitKey(1) & 0xFF == ord('q'):
+                            cv2.destroyAllWindows()
+                            return
+                except Exception as e:
+                    # if i logged in and the sender in the middle (p frames no i frame)
+                    print(f"[Decode Error] {e}")
+                    continue
     except KeyboardInterrupt:
         print("Receiver stopped.")
     finally:
