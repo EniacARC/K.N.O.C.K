@@ -1,3 +1,185 @@
+# import av
+# import cv2
+# import numpy as np
+# import time
+# import random
+# from RTP_msgs import RTPPacket, PacketType
+# from rtp_handler import RTPHandler
+#
+# # Configuration
+# SEND_IP = "127.0.0.1"
+# LISTEN_PORT = 5006
+# SEND_PORT = 2432
+# FRAME_RATE = 30
+# WIDTH, HEIGHT = 640, 480
+# MAX_PACKET_SIZE = 1400  # Bytes, respecting MTU
+#
+# def create_av_encoder():
+#     """Create an AV encoder for H.264."""
+#     container = av.open('pipe:', format='rawvideo', mode='w')
+#     stream = container.add_stream('libx264', rate=FRAME_RATE)
+#     stream.width = WIDTH
+#     stream.height = HEIGHT
+#     stream.pix_fmt = 'yuv420p'
+#     stream.options = {
+#         'preset': 'ultrafast',
+#         'tune': 'zerolatency',
+#         'crf': '23',
+#         'threads': '4'
+#     }
+#     return container, stream
+#
+# def fragment_nal_units(h264_data, max_packet_size):
+#     """Fragment H.264 NAL units into RTP payloads."""
+#     packets = []
+#     start = 0
+#     while start < len(h264_data):
+#         # Look for NAL unit start codes (0x000001 or 0x00000001)
+#         if start + 3 >= len(h264_data):
+#             break
+#         if h264_data[start:start+3] == b'\x00\x00\x01':
+#             nal_start = start
+#             start += 3
+#         elif start + 4 < len(h264_data) and h264_data[start:start+4] == b'\x00\x00\x00\x01':
+#             nal_start = start
+#             start += 4
+#         else:
+#             start += 1
+#             continue
+#
+#         # Find next NAL unit
+#         next_nal = len(h264_data)
+#         for i in range(start, len(h264_data) - 3):
+#             if h264_data[i:i+3] == b'\x00\x00\x01':
+#                 next_nal = i
+#                 break
+#             if i + 1 < len(h264_data) - 3 and h264_data[i:i+4] == b'\x00\x00\x00\x01':
+#                 next_nal = i
+#                 break
+#
+#         nal_unit = h264_data[nal_start:next_nal]
+#         nal_size = len(nal_unit)
+#
+#         if nal_size <= max_packet_size - 2:
+#             # Single NAL unit packet
+#             packets.append(nal_unit)
+#         else:
+#             # Fragmentation Unit (FU-A)
+#             nal_type = nal_unit[nal_start+3 if nal_start+3 < len(nal_unit) else 0] & 0x1F
+#             fu_payload = nal_unit[nal_start+4 if nal_start+4 < len(nal_unit) else nal_start+3:]
+#             offset = 0
+#             while offset < len(fu_payload):
+#                 chunk_size = min(max_packet_size - 3, len(fu_payload) - offset)
+#                 fu_indicator = (0x1C << 3) | (nal_type & 0x1F)  # FU-A
+#                 fu_header = 0
+#                 if offset == 0:
+#                     fu_header |= 0x80  # Start bit
+#                 if offset + chunk_size >= len(fu_payload):
+#                     fu_header |= 0x40  # End bit
+#                 fu_header |= (nal_type & 0x1F)
+#                 packet = bytearray([fu_indicator, fu_header]) + fu_payload[offset:offset+chunk_size]
+#                 packets.append(bytes(packet))
+#                 offset += chunk_size
+#
+#         start = next_nal
+#
+#     return packets
+#
+# def main():
+#     # Initialize webcam
+#     cap = cv2.VideoCapture(0)
+#     cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
+#     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
+#     cap.set(cv2.CAP_PROP_FPS, FRAME_RATE)
+#
+#     if not cap.isOpened():
+#         print("Error: Could not open webcam")
+#         return
+#
+#     # Initialize encoder
+#     container, stream = create_av_encoder()
+#
+#     # Initialize RTPHandler
+#     rtp_handler = RTPHandler(
+#         send_ip=SEND_IP,
+#         listen_port=LISTEN_PORT,
+#         send_port=SEND_PORT,
+#         msg_type=PacketType.VIDEO
+#     )
+#     rtp_handler.start(receive=False, send=True)
+#
+#     # RTP parameters
+#     clock_rate = 90000  # 90 kHz for video
+#     start_time = time.time()
+#     seq_num = 0
+#     ssrc = random.randint(0, 4294967295)
+#
+#     # FPS tracking
+#     fps_frame_count = 0
+#     fps_start_time = time.time()
+#
+#     try:
+#         while True:
+#             ret, frame = cap.read()
+#             if not ret:
+#                 print("Error: Failed to capture frame")
+#                 continue
+#
+#             # Convert BGR to RGB
+#             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+#
+#             # Create AV frame
+#             av_frame = av.VideoFrame.from_ndarray(frame_rgb, format='rgb24')
+#             av_frame.pts = int((time.time() - start_time) * FRAME_RATE)
+#
+#             # Encode frame
+#             packets = []
+#             for packet in stream.encode(av_frame):
+#                 if packet.size > 0:
+#                     packets.extend(fragment_nal_units(bytes(packet), MAX_PACKET_SIZE))
+#
+#             # Send RTP packets
+#             timestamp = int((time.time() - start_time) * clock_rate)
+#             for i, payload in enumerate(packets):
+#                 rtp_packet = RTPPacket()
+#                 rtp_packet.payload = payload
+#                 rtp_packet.timestamp = timestamp
+#                 rtp_packet.seq_num = seq_num
+#                 rtp_packet.marker = (i == len(packets) - 1)  # Marker on last packet
+#                 rtp_packet.ssrc = ssrc
+#                 rtp_packet.payload_type = PacketType.VIDEO.value
+#
+#                 try:
+#                     with rtp_handler.send_lock:
+#                         rtp_handler.send_queue.put_nowait(rtp_packet)
+#                 except:
+#                     pass  # Drop packet if queue is full
+#
+#                 seq_num = (seq_num + 1) % 65536
+#
+#             # FPS calculation
+#             fps_frame_count += 1
+#             current_time = time.time()
+#             if current_time - fps_start_time >= 1.0:
+#                 fps = fps_frame_count / (current_time - fps_start_time)
+#                 print(f"Encoding FPS: {fps:.2f}")
+#                 fps_frame_count = 0
+#                 fps_start_time = current_time
+#
+#             time.sleep(1 / FRAME_RATE)  # Control frame rate
+#
+#     except KeyboardInterrupt:
+#         print("Stopping sender...")
+#     finally:
+#         cap.release()
+#         container.close()
+#         rtp_handler.stop()
+#
+# if __name__ == "__main__":
+#     main()
+from fractions import Fraction
+
+import av
 # import queue
 # import random
 # import cv2
@@ -277,4 +459,52 @@ def sender_main():
     finally:
         cap.release()
         sender.stop()
-sender_main()
+
+
+def main():
+    # Open webcam with OpenCV
+    cap = cv2.VideoCapture(0)  # Change index if needed
+    sender = RTPHandler(send_ip='127.0.0.1', listen_port=5006, send_port=2432, msg_type=PacketType.VIDEO)
+    sender.start(receive=False, send=True)
+
+    # Encoder setup (H.264)
+    output_codec = 'h264'
+    encoder = av.codec.CodecContext.create(output_codec, 'w')
+    encoder.width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    encoder.height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    encoder.pix_fmt = 'yuv420p'
+    encoder.time_base = Fraction(1, 30)
+    encoder.options = {
+        'tune': 'zerolatency',
+        'preset': 'ultrafast',
+        'g': '1'  # GOP size of 1: all frames are I-frames
+    }
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Convert to AVFrame
+        av_frame = av.VideoFrame.from_ndarray(frame, format='bgr24')
+        av_frame = av_frame.reformat(format='yuv420p')
+
+        # Encode
+        packets = encoder.encode(av_frame)
+        for pack in packets:
+            payload = bytes(pack)
+            # Create RTP packet
+            pkt = RTPPacket(
+                payload_type=PacketType.VIDEO.value,
+                marker=True,
+            )
+            pkt.payload = payload
+
+            with sender.send_lock:
+                sender.send_queue.put(pkt)
+    cap.release()
+
+
+main()
+
+cv2.destroyAllWindows()
