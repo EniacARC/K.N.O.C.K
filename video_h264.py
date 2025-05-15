@@ -1140,13 +1140,13 @@ def main():
     encoder.options = {
         'tune': 'zerolatency',
         'preset': 'ultrafast',
-        'g': '30',  # GOP size of 1: all frames are I-frames
+        'g': '60',  # GOP size of 1: all frames are I-frames
         'keyint_min': '30',  # Min: 1 I-frame every 30 frames
         'bf': '0',         # NO B-frames
         'flags': '+cgop',  # Closed GOP (optional, improves error resilience)
         'rc_lookahead': '0',  # Disable rate control lookahead for lower latency
-        'me': 'dia'
-        # 'crf': '30',  # Constant Rate Factor - higher value = lower quality/size
+        'me': 'hex',
+        'crf': '30',  # Constant Rate Factor - higher value = lower quality/size
     }
 
     start = time.time()
