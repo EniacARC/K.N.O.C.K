@@ -1,3 +1,101 @@
+# import threading
+# import queue
+# import time
+# import av
+# import cv2
+# from RTP_msgs import RTPPacket, PacketType
+# from rtp_handler import RTPHandler
+#
+# WIDTH, HEIGHT = 640, 480
+# FPS = 30
+#
+# class DecoderThread(threading.Thread):
+#     def __init__(self, packet_queue):
+#         super().__init__()
+#         self.packet_queue = packet_queue
+#         self.running = True
+#         self.decoder = av.codec.CodecContext.create('h264', 'r')
+#         self.decoder.options = {
+#             'tune': 'zerolatency',
+#             'preset': 'ultrafast',
+#             'threads': 'auto',
+#             'fast': '1',
+#             'skip_loop_filter': 'all',
+#             'flags2': 'fast',
+#             'max_delay': '0',
+#         }
+#         self.decoder.pix_fmt = 'yuv420p'
+#
+#         # FPS measurement
+#         self.frame_count = 0
+#         self.fps_start_time = time.time()
+#
+#     def run(self):
+#         while self.running:
+#             try:
+#                 pkt = self.packet_queue.get(timeout=0.5)
+#             except queue.Empty:
+#                 continue
+#
+#             try:
+#                 av_packet = av.Packet(pkt.payload)
+#                 frames = self.decoder.decode(av_packet)
+#                 for frame in frames:
+#                     img = frame.to_ndarray(format='bgr24')
+#                     cv2.imshow('UDP Decoded Video', img)
+#                     if cv2.waitKey(1) & 0xFF == ord('q'):
+#                         self.running = False
+#                         return
+#
+#                     # Count frames for FPS
+#                     self.frame_count += 1
+#                     elapsed = time.time() - self.fps_start_time
+#                     if elapsed >= 1.0:
+#                         print(f"Decoding FPS: {self.frame_count / elapsed:.2f}")
+#                         self.frame_count = 0
+#                         self.fps_start_time = time.time()
+#             except Exception as e:
+#                 print(f"[Decode Error] {e}")
+#
+#     def stop(self):
+#         self.running = False
+#         self.join(timeout=1.0)
+#         self.decoder.close()
+#
+# def main():
+#     packet_queue = queue.Queue(maxsize=100)
+#
+#     receiver = RTPHandler(send_ip='127.0.0.1', listen_port=2432, send_port=5006, msg_type=PacketType.VIDEO)
+#     receiver.start(receive=True, send=False)
+#
+#     decoder_thread = DecoderThread(packet_queue)
+#     decoder_thread.start()
+#
+#     try:
+#         while True:
+#             if not receiver.receive_queue.empty():
+#                 with receiver.receive_lock:
+#                     pkt = receiver.receive_queue.get()
+#                 if pkt.payload_type != PacketType.VIDEO.value:
+#                     continue
+#                 try:
+#                     packet_queue.put_nowait(pkt)
+#                 except queue.Full:
+#                     # Drop packet if queue full
+#                     pass
+#             else:
+#                 time.sleep(0.01)
+#     except KeyboardInterrupt:
+#         print("Stopping receiver...")
+#     finally:
+#         decoder_thread.stop()
+#         receiver.stop()
+#         cv2.destroyAllWindows()
+#
+# if __name__ == "__main__":
+#     main()
+
+
 # import av
 # import cv2
 # import numpy as np

@@ -1,3 +1,150 @@
+# import cv2
+# import threading
+# import queue
+# import time
+# from fractions import Fraction
+# from RTP_msgs import RTPPacket, PacketType
+# from rtp_handler import RTPHandler
+# import av
+#
+# WIDTH, HEIGHT = 640, 480
+# FPS = 30
+#
+# class FrameGrabber(threading.Thread):
+#     def __init__(self, frame_queue):
+#         super().__init__()
+#         self.cap = cv2.VideoCapture(0)
+#         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
+#         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
+#         self.cap.set(cv2.CAP_PROP_FPS, FPS)
+#         self.frame_queue = frame_queue
+#         self.running = True
+#
+#     def run(self):
+#         while self.running:
+#             ret, frame = self.cap.read()
+#             if not ret:
+#                 continue
+#             try:
+#                 self.frame_queue.put(frame, timeout=0.1)
+#             except queue.Full:
+#                 # drop frame if queue full
+#                 pass
+#
+#     def stop(self):
+#         self.running = False
+#         self.cap.release()
+#
+# class EncoderThread(threading.Thread):
+#     def __init__(self, frame_queue, packet_queue):
+#         super().__init__()
+#         self.frame_queue = frame_queue
+#         self.packet_queue = packet_queue
+#         self.encoder = av.codec.CodecContext.create('h264', 'w')
+#         self.encoder.width = WIDTH
+#         self.encoder.height = HEIGHT
+#         self.encoder.pix_fmt = 'yuv420p'
+#         self.encoder.time_base = Fraction(1, FPS)
+#         self.encoder.options = {
+#             'tune': 'zerolatency',
+#             'preset': 'ultrafast',
+#             'g': '30',
+#             'bf': '0',
+#             'flags': '+cgop',
+#             'rc_lookahead': '0',
+#         }
+#         self.frame_count = 0
+#         self.running = True
+#
+#         # FPS measurement
+#         self.fps_count = 0
+#         self.fps_start_time = time.time()
+#
+#     def run(self):
+#         while self.running:
+#             try:
+#                 frame = self.frame_queue.get(timeout=0.5)
+#             except queue.Empty:
+#                 continue
+#
+#             av_frame = av.VideoFrame.from_ndarray(frame, format='bgr24').reformat(format='yuv420p')
+#             av_frame.pts = self.frame_count
+#             packets = self.encoder.encode(av_frame)
+#             for packet in packets:
+#                 pkt = RTPPacket(
+#                     payload_type=PacketType.VIDEO.value,
+#                     marker=True,
+#                     timestamp=int(self.frame_count * (90000 / FPS))
+#                 )
+#                 pkt.payload = bytes(packet)
+#                 try:
+#                     self.packet_queue.put_nowait(pkt)
+#                 except queue.Full:
+#                     pass
+#
+#             self.frame_count += 1
+#             self.fps_count += 1
+#
+#             # Print FPS every second
+#             elapsed = time.time() - self.fps_start_time
+#             if elapsed >= 1.0:
+#                 print(f"Encoding FPS: {self.fps_count / elapsed:.2f}")
+#                 self.fps_start_time = time.time()
+#                 self.fps_count = 0
+#
+#     def stop(self):
+#         self.running = False
+#         self.encoder.close()
+#
+# class SenderThread(threading.Thread):
+#     def __init__(self, packet_queue, sender):
+#         super().__init__()
+#         self.packet_queue = packet_queue
+#         self.sender = sender
+#         self.running = True
+#
+#     def run(self):
+#         while self.running:
+#             try:
+#                 pkt = self.packet_queue.get(timeout=0.5)
+#                 with self.sender.send_lock:
+#                     self.sender.send_queue.put_nowait(pkt)
+#             except queue.Empty:
+#                 continue
+#
+#     def stop(self):
+#         self.running = False
+#
+# def main():
+#     frame_queue = queue.Queue(maxsize=10)
+#     packet_queue = queue.Queue(maxsize=30)
+#
+#     sender = RTPHandler(send_ip='127.0.0.1', listen_port=5006, send_port=2432, msg_type=PacketType.VIDEO)
+#     sender.start(receive=False, send=True)
+#
+#     grabber = FrameGrabber(frame_queue)
+#     encoder = EncoderThread(frame_queue, packet_queue)
+#     sender_thread = SenderThread(packet_queue, sender)
+#
+#     grabber.start()
+#     encoder.start()
+#     sender_thread.start()
+#
+#     try:
+#         while True:
+#             time.sleep(1)
+#     except KeyboardInterrupt:
+#         print("Stopping sender...")
+#     finally:
+#         grabber.stop()
+#         encoder.stop()
+#         sender_thread.stop()
+#         sender.stop()
+#
+# if __name__ == "__main__":
+#     main()
+
+
 #
 # import cv2
 # import time
@@ -931,6 +1078,7 @@ import av
 # ------------------------------------------
 
 import cv2
+from imutils.video import VideoStream
 import time
 from RTP_msgs import RTPPacket, PacketType
 from rtp_handler import *
@@ -970,16 +1118,23 @@ def sender_main():
 
 
 def main():
+    # Start threaded video capture
+    vs = VideoStream(src=0).start()
+
+    # Wait a bit for camera to warm up
+    import time
+    time.sleep(2.0)
     # Open webcam with OpenCV
-    cap = cv2.VideoCapture(0)  # Change index if needed
     sender = RTPHandler(send_ip='127.0.0.1', listen_port=5006, send_port=2432, msg_type=PacketType.VIDEO)
     sender.start(receive=False, send=True)
+    frame = vs.read()
+    height, width = frame.shape[:2]
 
     # Encoder setup (H.264)
     output_codec = 'h264'
     encoder = av.codec.CodecContext.create(output_codec, 'w')
-    encoder.width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    encoder.height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    encoder.width = width
+    encoder.height = height
     encoder.pix_fmt = 'yuv420p'
     encoder.time_base = Fraction(1, 30)
     encoder.options = {
@@ -997,8 +1152,8 @@ def main():
     start = time.time()
     i = 0
     while True:
-        ret, frame = cap.read()
-        if not ret:
+        frame = vs.read()
+        if frame is None:
             break
 
         # Convert to AVFrame
