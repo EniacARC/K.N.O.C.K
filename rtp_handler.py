@@ -238,39 +238,42 @@ class RTPHandler:
                 packet.sequence_number = self.my_seq
                 # if packet is bigger than mmu split packet
                 data = packet.build_packet()
-                if self.msg_type == PacketType.VIDEO.value and len(data) > MAX_PACKET_SIZE:
-                    # print("too big!")
-                    # print(packet)
-                    packet.marker = False
-                    payload_all = packet.payload
-                    packet.payload = b''
-                    header_size = len(packet.build_packet())
-                    # Set the max payload size that ensures the full packet stays within limit
-                    max_payload_size = MAX_PACKET_SIZE - header_size
-                    # print(max_payload_size)
-
-                    # Split the payload into safe-sized chunks
-                    payloads = [payload_all[i:i + max_payload_size] for i in
-                                range(0, len(payload_all), max_payload_size)]
-                    # print(len(payloads))
-
-                    for payload in payloads[:-1]:  # All except the last
-                        packet.payload = payload
-                        packet.marker = False
-                        data = packet.build_packet()
-                        self.socket.sendto(data, (self.send_ip, self.send_port))
-                        self.my_seq += 1
-                        packet.sequence_number += 1
-
-                    # Send the last payload with marker = True
-                    packet.payload = payloads[-1]
-                    packet.marker = True
-                    data = packet.build_packet()
-                    self.socket.sendto(data, (self.send_ip, self.send_port))
-                    self.my_seq += 1
+                # if len(data) > MAX_PACKET_SIZE:
+                #     # print("too big!")
+                #     # print(packet)
+                #     packet.marker = False
+                #     payload_all = packet.payload
+                #     packet.payload = b''
+                #     header_size = len(packet.build_packet())
+                #     # Set the max payload size that ensures the full packet stays within limit
+                #     max_payload_size = MAX_PACKET_SIZE - header_size
+                #     # print(max_payload_size)
+                #
+                #     # Split the payload into safe-sized chunks
+                #     payloads = [payload_all[i:i + max_payload_size] for i in
+                #                 range(0, len(payload_all), max_payload_size)]
+                #     # print(len(payloads))
+                #
+                #     for payload in payloads[:-1]:  # All except the last
+                #         packet.payload = payload
+                #         packet.marker = False
+                #         data = packet.build_packet()
+                #         self.socket.sendto(data, (self.send_ip, self.send_port))
+                #         self.my_seq += 1
+                #         packet.sequence_number += 1
+                #
+                #     # Send the last payload with marker = True
+                #     packet.payload = payloads[-1]
+                #     packet.marker = True
+                #     data = packet.build_packet()
+                #     self.socket.sendto(data, (self.send_ip, self.send_port))
+                #     self.my_seq += 1
+                if False:
+                    pass
                 else:
-                    print(f"sending: {data} to {self.send_ip}:{self.send_port}")
+                    print(f"sending: {packet} to {self.send_ip}:{self.send_port}")
                     self.socket.sendto(data, (self.send_ip, self.send_port))
+                    # time.sleep(0.01)
                     self.my_seq += 1
                 # self.send_queue.task_done() ??
             except Exception as e:
@@ -292,7 +295,7 @@ class RTPHandler:
                 packet = RTPPacket()
                 if packet.decode_packet(data):
                 #     print(packet)
-                    if self.msg_type == PacketType.VIDEO.value:
+                    if True:
                         if self.recv_payload and self.recv_payload.timestamp != packet.timestamp:
                             # Timestamp mismatch: discard previous fragment
                             self.recv_payload = None
@@ -322,3 +325,44 @@ class RTPHandler:
                             self.receive_queue.put(packet)
             except Exception as e:
                 print(f"Error in receive loop: {e}")
+
+    @staticmethod
+    def build_packets(ssrc, payload):
+        to_send = []
+        timestamp = RTPPacket().timestamp
+        if len(payload) > MAX_PACKET_SIZE:
+            header_size = len(RTPPacket().build_packet())
+            # Set the max payload size that ensures the full packet stays within limit
+            max_payload_size = MAX_PACKET_SIZE - header_size
+            # print(max_payload_size)
+
+            # Split the payload into safe-sized chunks
+            payloads = [payload[i:i + max_payload_size] for i in
+                        range(0, len(payload), max_payload_size)]
+            # print(len(payloads))
+
+            for payload in payloads[:-1]:  # All except the last
+                packet = RTPPacket(
+                    timestamp = timestamp,
+                    ssrc = ssrc
+                )
+                packet.payload = payload
+                packet.marker = False
+                to_send.append(packet)
+
+            # Send the last payload with marker = True
+            packet = RTPPacket(
+                timestamp=timestamp,
+                ssrc=ssrc
+            )
+            packet.payload = payloads[-1]
+            packet.marker = True
+            to_send.append(packet)
+        else:
+            packet = RTPPacket(
+                timestamp = timestamp,
+                ssrc = ssrc
+            )
+            packet.payload = payload
+            to_send.append(packet)
+        return to_send
