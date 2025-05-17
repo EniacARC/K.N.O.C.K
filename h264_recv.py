@@ -223,8 +223,8 @@
 #
 # if __name__ == "__main__":
 #     main()
-
-
+import socket
+import time
 # import av
 # import cv2
 # import numpy as np
@@ -477,6 +477,12 @@
 from fractions import Fraction
 
 import av
+import cv2
+
+from RTP_msgs import PacketType, RTPPacket
+from rtp_handler import RTPHandler
+
+
 # import cv2
 # import queue
 # import ffmpeg
@@ -490,137 +496,75 @@ import av
 # LISTEN_PORT = 5004  # Port to bind for receiving
 # SEND_PORT = 5004  # Port to send RTP packets to (not used in receiver)
 # FRAME_RATE = 30  # Target frame rate
-# WIDTH, HEIGHT = 640, 480  # Video resolution
-# MAX_PACKET_SIZE = int(1500 / 8)  # Maximum packet size in bytes
-#
-# def decode_h264_to_frame(h264_data):
-#     """
-#     Decode H.264 data to a raw frame (BGR format for OpenCV).
-#     Returns a NumPy array representing the frame.
-#     """
-#     try:
-#         # Set up ffmpeg process for H.264 decoding
-#         process = (
-#             ffmpeg
-#             .input('pipe:', format='h264')
-#             .output('pipe:', format='rawvideo', pix_fmt='bgr24')
-#             .run_async(pipe_stdin=True, pipe_stdout=True)
-#         )
-#
-#         # Write H.264 data to ffmpeg stdin
-#         process.stdin.write(h264_data)
-#         process.stdin.close()
-#
-#         # Read decoded raw frame data
-#         raw_data = process.stdout.read(WIDTH * HEIGHT * 3)  # BGR24: 3 bytes per pixel
-#         process.stdout.close()
-#         process.wait()
-#
-#         if not raw_data:
-#             return None
-#
-#         # Convert raw data to NumPy array and reshape to frame
-#         frame = np.frombuffer(raw_data, dtype=np.uint8)
-#         frame = frame.reshape((HEIGHT, WIDTH, 3))
-#         return frame
-#
-#     except Exception as e:
-#         print(f"Error decoding frame: {e}")
-#         return None
-#
-# def main():
-#     # Initialize RTPHandler for receiving video
-#     rtp_handler = RTPHandler(
-#         send_ip=SEND_IP,  # Not used for sending, but required by constructor
-#         listen_port=LISTEN_PORT,
-#         send_port=SEND_PORT,  # Not used
-#         msg_type=PacketType.VIDEO
-#     )
-#
-#     # Start RTPHandler (only receiving, no sending)
-#     rtp_handler.start(receive=True, send=False)
-#
-#     try:
-#         while True:
-#             try:
-#                 # Get RTP packet from receive queue
-#                 with rtp_handler.receive_lock:
-#                     if not rtp_handler.receive_queue.empty():
-#                         rtp_packet = rtp_handler.receive_queue.get(timeout=1.0)
-#                         print(rtp_packet)
-#                     else:
-#                         continue
-#
-#                 # Ensure it's a video packet
-#                 if rtp_packet.payload_type != PacketType.VIDEO.value:
-#                     continue
-#
-#                 # Decode H.264 payload to frame
-#                 frame = decode_h264_to_frame(rtp_packet.payload)
-#                 if frame is None:
-#                     continue
-#
-#                 # Display the frame
-#                 cv2.imshow('Livestream', frame)
-#                 if cv2.waitKey(1) & 0xFF == ord('q'):
-#                     break
-#
-#             except queue.Empty:
-#                 continue
-#             except Exception as e:
-#                 print(f"Error processing packet: {e}")
-#
-#     except KeyboardInterrupt:
-#         print("Stopping receiver...")
-#     finally:
-#         # Cleanup
-#         rtp_handler.stop()
-#         cv2.destroyAllWindows()
-#
-# if __name__ == "__main__":
-#     main()
 
-import cv2
-import numpy as np
-from RTP_msgs import RTPPacket, PacketType
-from rtp_handler import RTPHandler
+def decode_proc():
+    # receiver = RTPHandler(send_ip='127.0.0.1', listen_port=2432, send_port=5006, msg_type=PacketType.VIDEO)
+    # receiver.start(receive=True, send=False)
+    decoder = av.CodecContext.create('h264', 'r')
+    decoder.options = {'flags2': '+fast'}
+    decoder.open()
 
-def receiver_main():
-    decoder = av.codec.CodecContext.create('h264', 'r')
-    decoder.options = {
-        'tune': 'zerolatency',
-        'preset': 'ultrafast',
-        'fast': '1',
-        'max_delay': '0'
-    }
-    decoder.pix_fmt = 'yuv420p'
-    receiver = RTPHandler(send_ip='127.0.0.1', listen_port=2432, send_port=5006, msg_type=PacketType.VIDEO)
-    receiver.start(receive=True, send=False)
+    frame_count = 0
+    start_time = time.time()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(('0.0.0.0', 2432))
+    sock.settimeout(0.5)
+    recv_payload = None
+    frm = None
 
-    try:
-        while True:
-            if not receiver.receive_queue.empty():
-                pkt = receiver.receive_queue.get()
-                img_data = pkt.payload
+    while True:
+        try:
+            data, addr = sock.recvfrom(1500)  # Max UDP packet size
+        except socket.timeout:
+            continue
 
-                try:
-                    packet = av.Packet(img_data)
+        packet = RTPPacket()
+        if packet.decode_packet(data):
+            #     print(packet)
+            if recv_payload and recv_payload.timestamp != packet.timestamp:
+                print("dropped")
+                # Timestamp mismatch: discard previous fragment
+                recv_payload = None
+            if packet.marker:
+                if recv_payload:
+                    # if it's not none then timestamps must match
+                    recv_payload.payload += packet.payload
+                    frm = recv_payload
+                    recv_payload = None
+                else:
+                    # No ongoing fragment or mismatch, queue this as a full packet
+                    frm = recv_payload
+            else:
+                # Intermediate fragment
+                if recv_payload:
+                    # if it's not none then timestamps must match
+                    # Continue building the current payload
+                    recv_payload.payload += packet.payload
+                else:
+                    # Start a new fragmented payload
+                    recv_payload = packet
 
-                    frames = decoder.decode(packet)
-                    for frame in frames:
-                        img = frame.to_ndarray(format='bgr24')
-                        cv2.imshow('UDP Decoded Video', img)
-                        if cv2.waitKey(1) & 0xFF == ord('q'):
-                            cv2.destroyAllWindows()
-                            return
-                except Exception as e:
-                    # if i logged in and the sender in the middle (p frames no i frame)
-                    print(f"[Decode Error] {e}")
-                    continue
-    except KeyboardInterrupt:
-        print("Receiver stopped.")
-    finally:
-        receiver.stop()
-        cv2.destroyAllWindows()
+        try:
+            if frm is None:
+                continue
+            pkt = av.Packet(frm.payload)
+            frm = None
 
-receiver_main()
+            frames = decoder.decode(pkt)
+            for f in frames:
+                img = f.to_ndarray(format='bgr24')
+                cv2.imshow('Decoded Frame', img)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    return
+        except Exception:
+            continue
+
+        frame_count += 1
+        elapsed = time.time() - start_time
+        if elapsed > 1.0:
+            fps_actual = frame_count / elapsed
+            print(f'Decoded FPS: {fps_actual:.2f}')
+            frame_count = 0
+            start_time = time.time()
+
+decode_proc()
