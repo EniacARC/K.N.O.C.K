@@ -226,7 +226,7 @@ class PacketType(Enum):
 
 class RTPPacket:
     def __init__(self, version=0, padding=False, extension=False, marker=False, payload_type=PacketType.VIDEO.value,
-                 sequence_number=0, ssrc=0, timestamp=int(time.time() * 1000) & 0xFFFFFFF):
+                 sequence_number=0, ssrc=0, timestamp=None):
         self.version = version
         self.padding = padding
         self.extension = extension
@@ -234,7 +234,7 @@ class RTPPacket:
         self.payload_type = payload_type
         self.sequence_number = sequence_number
         self.ssrc = ssrc
-        self.timestamp = timestamp
+        self.timestamp = self.timestamp = timestamp if timestamp is not None else int(time.time() * 1000) & 0xFFFFFFF
 
         self.cc = 0
         self.payload = b''

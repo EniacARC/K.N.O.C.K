@@ -1,4 +1,5 @@
 import multiprocessing as mp
+import random
 import socket
 
 import cv2
@@ -7,7 +8,7 @@ import time
 from fractions import Fraction
 import numpy as np
 
-from RTP_msgs import PacketType
+from RTP_msgs import PacketType, RTPPacket
 from rtp_handler import RTPHandler
 
 # ----- CONFIG -----
@@ -56,7 +57,6 @@ def encode_proc(frame_queue: mp.Queue):
     frame_count = 0
     start_time = time.time()
     fps_timer = time.time()
-
     while True:
         frame = frame_queue.get()
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -70,6 +70,7 @@ def encode_proc(frame_queue: mp.Queue):
             for frag in frags:
                 sender.send_packet(frag)
                 # time.sleep(0.01)
+            print("end")
 
         frame_count += 1
 

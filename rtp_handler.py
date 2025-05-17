@@ -32,6 +32,7 @@ class RTPHandler:
         self.send_thread = None
 
         self.my_seq = random.randint(0, 50000)
+        self.remote_seq = None
         # self.ssrc = random.randint(0, 50000) # will be selected from the sending thread
 
     def start(self, receive):
@@ -62,6 +63,10 @@ class RTPHandler:
         """Thread function to send RTP packets"""
         try:
             # the sequence number is not controlled by the high logic but by transport logic, so it belongs here.
+            # if random.randint(1, 100) == 2:
+            #     print("dropped")
+            #     self.my_seq += 1
+            #     return
             packet.sequence_number = self.my_seq
             # if packet is bigger than mmu split packet
             data = packet.build_packet()
@@ -84,33 +89,44 @@ class RTPHandler:
                 except socket.timeout:
                     continue
 
-
                 # Parse the received packet
                 packet = RTPPacket()
                 if packet.decode_packet(data):
-                    if self.recv_payload and self.recv_payload.timestamp != packet.timestamp:
-                        print("dropped")
-                        # Timestamp mismatch: discard previous fragment
-                        self.recv_payload = None
+                    print(packet)
+                    # Case 1: A previous frame is being built
+                    if self.recv_payload:
+                        # If the timestamp changed, drop the old frame
+                        if packet.sequence_number != self.remote_seq:
+                            print(f"Dropped incomplete frame: {self.recv_payload}")
+                            self.recv_payload = None
+
+                        # If packet belongs to current frame but is not the expected sequence number, drop frame
+                        elif packet.sequence_number != self.remote_seq:
+                            print(f"Missing packet, dropped frame: {self.recv_payload}")
+                            self.recv_payload = None
+
+                    # Continue based on whether this is a marker (last fragment) or not
                     if packet.marker:
                         if self.recv_payload:
+                            # Append and complete the current frame
                             self.recv_payload.payload += packet.payload
                             with self.receive_lock:
                                 self.receive_queue.put(self.recv_payload)
                             self.recv_payload = None
                         else:
-                            # No ongoing fragment or mismatch, queue this as a full packet
+                            # Full packet in one go, no fragmentation
                             with self.receive_lock:
                                 self.receive_queue.put(packet)
                     else:
-                        # Intermediate fragment
+                        # Intermediate or first fragment
                         if self.recv_payload:
-                            # if it's not none then timestamps must match
-                            # Continue building the current payload
+                            # Append fragment
                             self.recv_payload.payload += packet.payload
+                            self.remote_seq += 1
                         else:
-                            # Start a new fragmented payload
+                            # Start a new fragmented frame
                             self.recv_payload = packet
+                            self.remote_seq = packet.sequence_number + 1
             except Exception as e:
                 print(f"Error in receive loop: {e}")
 
