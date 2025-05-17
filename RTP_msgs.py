@@ -246,7 +246,6 @@ class RTPPacket:
 
         # Second byte: marker (1 bit), payload type (7 bits)
         second_byte = (self.marker << 7) | (self.payload_type & 0x7F)
-
         # Build the header
         header = struct.pack('!BBHII',
                              first_byte,

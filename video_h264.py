@@ -34,9 +34,8 @@ def capture_proc(frame_queue: mp.Queue):
 
 
 def encode_proc(frame_queue: mp.Queue):
-
-    # sender = RTPHandler(send_ip='127.0.0.1', listen_port=4544, send_port=2432, msg_type=PacketType.VIDEO)
-    # sender.start(receive=False, send=True)
+    sender = RTPHandler(send_ip='127.0.0.1', listen_port=4544, send_port=2432, msg_type=PacketType.VIDEO)
+    sender.start(receive=False)
 
     encoder = av.CodecContext.create('h264', 'w')
     encoder.width = WIDTH
@@ -50,14 +49,14 @@ def encode_proc(frame_queue: mp.Queue):
         'profile': 'baseline',
         'g': '30',
         'bf': '0',
-        # 'maxrate': '500k',
-        # 'bufsize': '1000k',
     }
     encoder.max_b_frames = 0
     encoder.open()
 
     frame_count = 0
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    start_time = time.time()
+    fps_timer = time.time()
+
     while True:
         frame = frame_queue.get()
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -69,11 +68,17 @@ def encode_proc(frame_queue: mp.Queue):
         for pkt in packets:
             frags = RTPHandler.build_packets(0, bytes(pkt))
             for frag in frags:
-                frag1 = frag.build_packet()
-                sock.sendto(frag1, ('127.0.0.1', 2432))
-                time.sleep(0.01)
+                sender.send_packet(frag)
+                # time.sleep(0.01)
 
         frame_count += 1
+
+        # === FPS Counter ===
+        if time.time() - fps_timer >= 1.0:
+            elapsed = time.time() - start_time
+            fps = frame_count / elapsed
+            print(f"[ENCODER] FPS: {fps:.2f}")
+            fps_timer = time.time()
 
 
 if __name__ == '__main__':
