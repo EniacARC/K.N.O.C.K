@@ -1,4 +1,5 @@
 import socket
+import threading
 
 import select
 from abc import ABC, abstractmethod
@@ -107,6 +108,9 @@ class SIPHandler:
             print("Disconnected from server")
 
     def start(self):
+        main_loop = threading.Thread(target=self._main_loop)
+        main_loop.start()
+    def _main_loop(self):
         if not self.connected:
             return
         while self.connected:
@@ -282,8 +286,12 @@ class SIPHandler:
             self.clear_call()
 
 
-
-
+    def register(self):
+        req = SIPMsgFactory.create_request(SIPMethod.REGISTER, SIP_VERSION, SERVER_URI, hand.uri, "1233", 1)
+        self.current_call_id = "1233"
+        self.call_type = SIPCallType.REGISTER
+        self.call_state = SIPCallState.WAITING_AUTH
+        send_sip_tcp(hand.socket, str(req).encode())
 
     def clear_call(self):
         print(f"Terminating call {self.current_call_id}")
@@ -298,9 +306,5 @@ class SIPHandler:
 
 hand = SIPHandler('asc', 'cedf3')
 hand.connect()
-req = SIPMsgFactory.create_request(SIPMethod.REGISTER, SIP_VERSION, SERVER_URI, hand.uri, "1233", 1)
-hand.current_call_id = "1233"
-hand.call_type = SIPCallType.REGISTER
-hand.call_state = SIPCallState.WAITING_AUTH
-print(send_sip_tcp(hand.socket, str(req).encode()))
 hand.start()
+hand.register()
