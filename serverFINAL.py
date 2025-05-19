@@ -513,8 +513,9 @@ class SIPServer:
             call.last_active = datetime.datetime.now()
 
         with self.reg_lock:
+            need_auth = True
             if self.registered_user.get_by_key(sock):
-                if self.registered_user.get_by_val(call_id).socket == sock:
+                if self.registered_user.get_by_val(uri).socket == sock:
                     # this is the same user in the same connection that was already authenticated
                     with self.reg_lock:
                         user = RegisteredUser(
@@ -527,7 +528,20 @@ class SIPServer:
                         self.registered_user.add(user)  # overrides previous register if exists
                         self._send_to_client(sock, SIPMsgFactory.create_response_from_request(req, SIPStatusCode.OK,
                                                                                               SERVER_URI))
-                    del self.active_calls[call_id]  # remove call
+
+                    need_auth = False
+
+            elif self.registered_user.get_by_val(uri):
+                # someone is registered to the uri already
+                error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.FORBIDDEN, SERVER_URI)
+                self._send_to_client(sock, str(error_msg).encode())
+                need_auth = False
+
+            if not need_auth:
+                del self.active_calls[call_id]
+                return
+
+
         auth_header = req.get_header('www-authenticate')
         if auth_header:
             with self.call_lock:
@@ -670,8 +684,8 @@ class SIPServer:
                         call.call_state = SIPCallState.RINGING
                     elif call.call_state == SIPCallState.RINGING and res.status_code == SIPStatusCode.OK:
                         call.call_state = SIPCallState.WAITING_ACK
-                        # proccess sdp for the other side
                         if not res.body:
+                            print("not valid!")
                             not_valid.status_code = SIPStatusCode.BAD_REQUEST
                             self._send_to_client(sock, str(not_valid).encode())
                             return
@@ -797,22 +811,27 @@ class SIPServer:
         with self.reg_lock:
             self.registered_user.remove_by_key(sock)
         with self.call_lock:
+            end_msg = None
             # Remove a call that the sock is in. If there is another UAC send them an error msg
             for call_id, call in list(self.active_calls.items()):
                 if call.caller_socket is sock or call.callee_socket is sock:
                     if call.call_type == SIPCallType.INVITE:
+                        print("adawd")
                         send_sock = call.caller_socket if call.callee_socket == sock else call.callee_socket
                         with self.reg_lock:
                             if self.registered_user.get_by_key(send_sock):
                                 to_uri = self.registered_user.get_by_key(send_sock).uri
                                 end_msg = SIPMsgFactory.create_response(SIPStatusCode.DOES_NOT_EXIST_ANYWHERE, SIP_VERSION,
                                                                         SIPMethod.OPTIONS, call.last_used_cseq_num, to_uri, SERVER_URI, call.call_id)
-                                print(end_msg)
-                                self._send_to_client(sock, str(end_msg).encode())
+
+
 
                     if call.uri in self.pending_auth:
                         del self.pending_auth[call.uri]
                     del self.active_calls[call_id]
+                    if end_msg:
+                        print(end_msg)
+                        self._send_to_client(send_sock, str(end_msg).encode())
 
         sock.close()
 

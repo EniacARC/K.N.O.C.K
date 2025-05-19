@@ -223,6 +223,7 @@ class SIPHandler:
 
         return parsed
     def send_auth_response(self, msg):
+        print("auth")
         if self.call_type == SIPCallType.INVITE:
             method = SIPMethod.INVITE
         else:
@@ -249,6 +250,8 @@ class SIPHandler:
                                            cseq,
                                                {'www-authenticate': auth_header})
 
+            print(req)
+
             send_sip_tcp(self.socket, str(req).encode())
 
     def process_response(self, msg):
@@ -256,6 +259,9 @@ class SIPHandler:
         if self.call_state == SIPCallState.WAITING_AUTH and msg.status_code == SIPStatusCode.UNAUTHORIZED:
             # we need to send auth response
             self.send_auth_response(msg)
+        elif msg.status_code == SIPStatusCode.DOES_NOT_EXIST_ANYWHERE:
+            # the call was terminated in the server
+            self.clear_call()
         elif self.call_type == SIPCallType.REGISTER:
               if msg.status_code == SIPStatusCode.OK:
                 # register was successful
@@ -278,10 +284,6 @@ class SIPHandler:
                 res = SIPMsgFactory.create_request(SIPMethod.ACK, SIP_VERSION, SERVER_URI, self.uri, self.current_call_id, cseq=cseq)
                 send_sip_tcp(self.socket, str(res).encode())
                 self.clear_call()
-
-        elif msg.status_code == SIPStatusCode.DOES_NOT_EXIST_ANYWHERE:
-            # the call was terminated in the server
-            self.clear_call()
 
 
     def register(self):

@@ -24,7 +24,7 @@ class AuthService:
         return TEMP_H1
 
     def _get_ha2(self, method, realm):
-        return hashlib.md5(f"{method}:{realm}".encode())
+        return hashlib.md5(f"{method}:{realm}".encode()).hexdigest()
 
     def calculate_hash_auth(self, username, method, nonce, realm=None):
         if not realm:
