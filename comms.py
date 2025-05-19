@@ -125,19 +125,19 @@ def recv_sip_body(sock, num, max_passes):
      :return: received message
      :rtype: bytes
      """
-    bod = b''
+    bod = ''
     passes = 0
     try:
         while len(bod) < num and passes < max_passes:
             passes += 1
-            chunk = sock.recv(num - len(bod))
-            if chunk == b'':
-                bod = b''
+            chunk = sock.recv(num - len(bod)).decode()
+            if chunk == '':
+                bod = ''
                 break
             bod += chunk
     except socket.error as err:
         # logging.error(f"error while recv body: {err}")
-        bod = b''
+        bod = ''
     finally:
         return bod
 

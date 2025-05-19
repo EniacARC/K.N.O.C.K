@@ -167,6 +167,7 @@ class SIPMsg(ABC):
             self.headers['content-length'] = int(self.headers['content-length'])
 
     def _build_headers(self):
+        # there is some error here!
         headers_copy = copy.deepcopy(self.headers)
 
         try:

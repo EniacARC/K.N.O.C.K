@@ -86,7 +86,7 @@ class SIPHandler:
         self.call_type = None
         self.call_state = None
 
-        self.auth_authority = AuthService('')
+        self.auth_authority = AuthService(SERVER_URI)
 
 
     def connect(self):
@@ -117,7 +117,7 @@ class SIPHandler:
             readable, _, _ = select.select([self.socket], [], [], 0.5)
             for sock in readable:
                 msg = receive_tcp_sip(sock, MAX_PASSES_META, MAX_PASSES_BODY)
-                print(type(msg))
+                print(msg)
                 if isinstance(msg, SIPRequest):
                     if msg.method == SIPMethod.OPTIONS.value:
                         # keep alive
@@ -182,6 +182,7 @@ class SIPHandler:
         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.RINGING, self.uri)
         if send_sip_tcp(self.socket, str(res).encode()):
             self.call_state = SIPCallState.RINGING
+            self.answer_call(msg, True)
             # call gui for answer (using event, not blocking main thread for recv)
 
     def process_cancel(self, msg):
@@ -222,7 +223,6 @@ class SIPHandler:
 
         return parsed
     def send_auth_response(self, msg):
-        print('auth')
         if self.call_type == SIPCallType.INVITE:
             method = SIPMethod.INVITE
         else:
@@ -237,7 +237,7 @@ class SIPHandler:
             # not valid
             self.clear_call()
         else:
-            response = self.auth_authority.calculate_hash_auth(self.uri, method, nonce, realm)
+            response = self.auth_authority.calculate_hash_auth(self.uri, method.value, nonce, realm)
 
             auth_header = f'digest username="{self.uri}", realm="{realm}", nonce="{nonce}", response="{response}"'
 
@@ -252,14 +252,12 @@ class SIPHandler:
             send_sip_tcp(self.socket, str(req).encode())
 
     def process_response(self, msg):
-        print(msg)
         # Process responses for current call if needed
         if self.call_state == SIPCallState.WAITING_AUTH and msg.status_code == SIPStatusCode.UNAUTHORIZED:
             # we need to send auth response
             self.send_auth_response(msg)
         elif self.call_type == SIPCallType.REGISTER:
               if msg.status_code == SIPStatusCode.OK:
-                print("yes!!")
                 # register was successful
                 self.clear_call()
         elif self.call_type == SIPCallType.INVITE:
@@ -287,11 +285,18 @@ class SIPHandler:
 
 
     def register(self):
-        req = SIPMsgFactory.create_request(SIPMethod.REGISTER, SIP_VERSION, SERVER_URI, hand.uri, "1233", 1)
+        req = SIPMsgFactory.create_request(SIPMethod.REGISTER, SIP_VERSION, SERVER_URI, self.uri, "1233", 1)
         self.current_call_id = "1233"
         self.call_type = SIPCallType.REGISTER
         self.call_state = SIPCallState.WAITING_AUTH
         send_sip_tcp(hand.socket, str(req).encode())
+
+    def invite(self):
+        req = SIPMsgFactory.create_request(SIPMethod.INVITE, SIP_VERSION, 'user2', self.uri, "456", 1, body="hello")
+        self.current_call_id = "456"
+        self.call_type = SIPCallType.INVITE
+        send_sip_tcp(self.socket, str(req).encode())
+
 
     def clear_call(self):
         print(f"Terminating call {self.current_call_id}")
@@ -304,7 +309,8 @@ class SIPHandler:
     def allocate_port(self):
         pass
 
-hand = SIPHandler('asc', 'cedf3')
+hand = SIPHandler('user1', 'qwe')
 hand.connect()
 hand.start()
 hand.register()
+hand.invite()
