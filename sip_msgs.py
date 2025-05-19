@@ -213,6 +213,7 @@ class SIPMsg(ABC):
             if self.body:
                 msg += self.body
             return msg
+        return None
 
     # manage headers/body
     def set_header(self, key, value):
@@ -313,9 +314,8 @@ class SIPMsgFactory:
         req_object.set_header('from', from_uri)
         req_object.set_header('call-id', call_id)
         req_object.set_header('cseq', [cseq, method.value])
-        print(req_object.get_header('cseq'))
         if additional_headers:
-            for key, value in additional_headers:
+            for key, value in additional_headers.items():
                 req_object.set_header(key, value)
         if body:
             req_object.set_body(body)
@@ -326,18 +326,18 @@ class SIPMsgFactory:
 
     @staticmethod
     def create_response_from_request(request, status_code, from_uri, additional_headers=None):
-        print("creating response")
         res_object = SIPResponse()
         res_object.status_code = status_code
         if additional_headers:
-            for key, value in additional_headers:
+            print(additional_headers)
+            for key, value in additional_headers.items():
                 res_object.set_header(key, value)
 
         res_object.version = request.version
-        res_object.set_header('to', request.headers['from'])
+        res_object.set_header('to', request.get_header('from'))
         res_object.set_header('from', from_uri)
-        res_object.set_header('call-id', request.headers['call-id'])
-        res_object.set_header('cseq', request.headers['cseq'])
+        res_object.set_header('call-id', request.get_header('call-id'))
+        res_object.set_header('cseq', request.get_header('cseq'))
 
         if request.body:
             res_object.set_body(request.body)
@@ -351,15 +351,20 @@ class SIPMsgFactory:
         res_object = SIPResponse()
         res_object.status_code = status_code
         if additional_headers:
-            for key, value in additional_headers:
+            for key, value in additional_headers.items():
                 res_object.set_header(key, value)
 
-        res_object.version = version.version
+        res_object.version = version
         res_object.set_header('to', to_uri)
+
         res_object.set_header('from', from_uri)
+
         res_object.set_header('call-id', call_id)
+
         res_object.set_header('cseq', [cseq, method.value])
+
         res_object.set_header('content-length', 0)  # assume this is for errors. no body needed
+
         return res_object
 
 

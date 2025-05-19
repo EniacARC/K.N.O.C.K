@@ -1,6 +1,7 @@
 import concurrent.futures
 import queue
 import traceback
+from traceback import print_tb
 
 from sip_msgs import *
 from authentication import *
@@ -24,7 +25,7 @@ SERVER_URI = "myserver"
 SERVER_IP = '127.0.0.1'  # need to find out using sbc
 CALL_IDLE_LIMIT = 15
 REGISTER_LIMIT = 60
-REQUIRED_HEADERS = {'to', 'from', 'call-id', 'cseq', 'content-length'}
+REQUIRED_HEADERS = {'to', 'from', 'call-id', 'cseq'} #'content-length'
 KEEP_ALIVE_MSG = SIPMsgFactory.create_request(SIPMethod.OPTIONS, SIP_VERSION, "keep-alive", "keep-alive",
                                               "", "1")
 MAX_PASSES_META = 8000  # 8 kb
@@ -297,11 +298,10 @@ class SIPServer:
         if isinstance(msg, SIPRequest):
             self.process_request(sock, msg)
         else:
-            self.process_request(sock, msg)
+            self.process_response(sock, msg)
 
     def process_request(self, sock, req):
         print("is request")
-        print(req)
         not_valid = self._check_request_validly(req)
         if not_valid:
             print("not valid request!")
@@ -314,6 +314,9 @@ class SIPServer:
         else:
             print("valid")
             method = req.method
+            print(method)
+            print(SIPMethod.REGISTER.value)
+            print(method == SIPMethod.REGISTER.value)
             if method == SIPMethod.REGISTER.value:
                 self.register_request(sock, req)  # Handle register
             elif method == SIPMethod.INVITE.value:
@@ -324,23 +327,24 @@ class SIPServer:
                 pass  # Handle BYE
 
     def _check_request_validly(self, msg):
-        error_msg = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, SERVER_URI)
+        status = SIPStatusCode.OK
         if msg.version != SIP_VERSION:
-            error_msg.status_code = SIPStatusCode.VERSION_NOT_SUPPORTED
-            error_msg.version = SIP_VERSION
-        elif REQUIRED_HEADERS.issubset(msg.headers):
-            error_msg.status_code = SIPStatusCode.BAD_REQUEST
+            status = SIPStatusCode.VERSION_NOT_SUPPORTED
+            msg.version = SIP_VERSION
+        if not REQUIRED_HEADERS.issubset(msg.headers):
+            status= SIPStatusCode.BAD_REQUEST
             missing = REQUIRED_HEADERS - msg.headers.keys()
             for header in missing:
-                error_msg.set_header(header, "missing")
-        elif msg.get_header('cseq')[1] != msg.method:
-            error_msg.status_code = SIPStatusCode.BAD_REQUEST
-            error_msg.set_header('cseq', [msg.get_header['cseq'][0], msg.method.lower()])
+                msg.set_header(header, "missing")
+        if msg.get_header('cseq')[1] != msg.method:
+            status = SIPStatusCode.BAD_REQUEST
+            msg.set_header('cseq', [msg.get_header['cseq'][0], msg.method.lower()])
         # elif len(msg.body) != msg.get_header('content-length'):
         #     error_msg.status_code = SIPStatusCode.BAD_REQUEST
 
-        if error_msg.status_code == SIPStatusCode.OK:
+        if status == SIPStatusCode.OK:
             return None
+        error_msg = SIPMsgFactory.create_response_from_request(msg, status, SERVER_URI)
         return error_msg
 
     def ack_request(self, sock, req):
@@ -383,6 +387,7 @@ class SIPServer:
                 req.set_header('to', 'cancel')
 
             self._send_to_client(call.caller_socket, str(req).encode())
+            self.active_calls[call_id].call_state = SIPCallState.INIT_CANCEL
 
     def invite_request(self, sock, req):
         # in register uri the uri you are trying to register
@@ -395,11 +400,13 @@ class SIPServer:
             call = None
             if call_id in self.active_calls:
                 call = self.active_calls[call_id]
+                print(f"call: {call}")
                 if cseq != call.last_used_cseq_num + 1 or call.uri != uri_recv or call.method != req.method.value or call.method != SIPMethod.INVITE or sock is not call.caller_socket:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
                     return
             else:
+                print("create call")
                 call = Call(
                     call_type=SIPCallType.INVITE,
                     call_id=call_id,
@@ -465,7 +472,7 @@ class SIPServer:
                                  SIPMsgFactory.create_response_from_request(req, SIPStatusCode.TRYING, SERVER_URI))
 
     def register_request(self, sock, req):
-        print("register request")
+        print(req)
 
         # in register uri the uri you are trying to register
         uri = req.get_header('from')
@@ -475,6 +482,8 @@ class SIPServer:
         expires = REGISTER_LIMIT
         if req.get_header('expires'):
             expires = int(req.get_header('expires'))
+
+
 
         if to_uri != SERVER_URI:
             # register is to the server only
@@ -489,7 +498,6 @@ class SIPServer:
                 print("found call")
                 call = self.active_calls[call_id]
                 if cseq != call.last_used_cseq_num + 1 or call.uri != uri or call.call_type.value != req.method or call.call_type.value != SIPMethod.REGISTER.value or sock is not call.caller_socket:
-                    print("hello?")
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
                     return
@@ -536,8 +544,6 @@ class SIPServer:
                     return
                 # verify auth response
                 auth_header_parsed = self._parse_auth_header(auth_header)
-                print("parsed")
-                print(auth_header_parsed)
                 if not auth_header_parsed:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
@@ -571,9 +577,10 @@ class SIPServer:
                             self._send_to_client(sock,
                                                  str(SIPMsgFactory.create_response_from_request(req, SIPStatusCode.OK,
                                                                                             SERVER_URI)).encode())
-                            print(self.registered_user)
+                            print(user)
 
         else:
+            print("none")
             self._create_auth_challenge(sock, req)
 
     def _parse_auth_header(self, header) -> dict | None:
@@ -581,11 +588,13 @@ class SIPServer:
         Parses a Digest Authorization header into a dictionary.
         Returns None if the format is invalid or required fields are missing.
         """
+
+        # expected: Digest key="value", ...
+        # must have - username, realm, nonce, response
         if not header or not header.lower().startswith("digest "):
             return None
 
         header = header[7:].strip()
-        print(header)
 
         # Regex for key="value" or key=value (handles both quoted/unquoted)
         pattern = re.compile(r'(\w+)=("([^"\\]*(\\.[^"\\]*)*)"|[^,]+)')
@@ -619,20 +628,24 @@ class SIPServer:
                 created_time=datetime.datetime.now()
             )
             self.pending_auth[call_id] = challenge
+        print("created")
 
-        auth_header = f'Digest realm="{SERVER_URI}", nonce="{nonce}, algorithm=MD5'
+        auth_header = f'digest realm="{SERVER_URI}", nonce="{nonce}, algorithm=MD5'
         # Create challenge response
         response = SIPMsgFactory.create_response_from_request(request, SIPStatusCode.UNAUTHORIZED,
-                                                              SERVER_URI, [("www-authenticate", auth_header)])
-        response.set_header('from', SERVER_URI)
+                                                              SERVER_URI, {"www-authenticate": auth_header})
         print("auth challnange is:")
         print(response)
         self._send_to_client(sock, str(response).encode())
 
     def process_response(self, sock, res):
         not_valid = self._check_response_valid(res)
+        print(f"valid: {not_valid}")
         if not_valid:
+            print(res)
             self._send_to_client(sock, str(not_valid).encode())
+            return
+
 
         uri = res.get_header('from')
         to_uri = res.get_header('to')
@@ -656,8 +669,7 @@ class SIPServer:
         if call_id in self.pending_keep_alive:
             with self.conn_lock:
                 # The response is to a keep alive
-                if res.status_code is SIPStatusCode.OK and res.get_header('cseq') == str(
-                        self.pending_keep_alive[call_id].last_used_cseq_num):
+                if res.status_code is SIPStatusCode.OK and res.get_header('cseq')[0] == self.pending_keep_alive[call_id].last_used_cseq_num:
                     del self.pending_keep_alive[call_id]  # The response was valid so the connection is kept alive
                 # Else response is invalid, and we drop them at the next keep_alive check
         else:
@@ -684,13 +696,14 @@ class SIPServer:
                         ack_req = SIPMsgFactory.create_request(SIPMethod.ACK, SIP_VERSION, uri, SERVER_URI, call_id,
                                                                cseq + 1)
                         self._send_to_client(sock, str(ack_req).encode())
-                        del self.active_calls[call_id]
+                        # del self.active_calls[call_id] - do it in the ack
 
                     else:
                         not_valid.status_code = SIPStatusCode.NOT_ACCEPTABLE
                         self._send_to_client(sock, str(not_valid).encode())
                         return  # we do not want to foward thhe invalid msg
 
+                    # forward to other side
                     send_sock = call.caller_socket if sock != call.caller_socket else call.callee_socket
                     self._send_to_client(send_sock, str(res).encode())
                 else:
@@ -700,23 +713,29 @@ class SIPServer:
                     self._send_to_client(sock, str(error_msg).encode())
 
     def _check_response_valid(self, msg):
-        error_msg = SIPMsgFactory.create_response(SIPStatusCode.OK, SIP_VERSION, SIPMethod.OPTIONS,
-                                                  msg.get_header('cseq'), msg.get_header('to'),
-                                                  msg.get_header('from'), msg.get_header('call-id'))
+        status = SIPStatusCode.OK
         if msg.version != SIP_VERSION:
-            error_msg.status_code = SIPStatusCode.VERSION_NOT_SUPPORTED
-            error_msg.version = SIP_VERSION
-        elif REQUIRED_HEADERS.issubset(msg.headers):
-            error_msg.status_code = SIPStatusCode.BAD_REQUEST
+
+            status = SIPStatusCode.VERSION_NOT_SUPPORTED
+            msg.version = SIP_VERSION
+        if not REQUIRED_HEADERS.issubset(msg.headers):
+            status = SIPStatusCode.BAD_REQUEST
             missing = REQUIRED_HEADERS - msg.headers.keys()
             for header in missing:
-                error_msg.set_header(header, "missing")
-        elif msg.status_code not in SIPStatusCode:
-            error_msg.status_code = SIPStatusCode.BAD_REQUEST
+                msg.set_header(header, "missing")
+        if msg.status_code not in SIPStatusCode:
+
+            status = SIPStatusCode.BAD_REQUEST
 
         # elif len(msg.body) != msg.get_header('content-length'):
         #     error_msg.status_code = SIPStatusCode.BAD_REQUEST
-
+        error_msg = SIPMsgFactory.create_response(status, SIP_VERSION,
+                                                  SIPMethod.OPTIONS,
+                                                  msg.get_header('cseq')[0],
+                                                  msg.get_header('from'),
+                                                  SERVER_URI,
+                                                  msg.get_header('call-id')
+                                                  )
         if error_msg.status_code == SIPStatusCode.OK:
             return None
         return error_msg
@@ -733,9 +752,29 @@ class SIPServer:
         """Removes calls with sockets that are inactive"""
         with self.call_lock:
             for call_id, call in self.active_calls:
-                if (
-                        datetime.datetime.now() - call.last_active) >= CALL_IDLE_LIMIT and call.call_type != SIPCallState.IN_CALL:
+                if (datetime.datetime.now() - call.last_active) >= CALL_IDLE_LIMIT and call.call_type != SIPCallState.IN_CALL:
+
+                    # send to the clients that the call was terminated if active
+                    end_msg = SIPMsgFactory.create_response(SIPStatusCode.DOES_NOT_EXIST_ANYWHERE, SIP_VERSION,
+                                                                    SIPMethod.OPTIONS,
+                                                                    SIPMethod.INVITE, 'none', SERVER_URI, call.call_id)
+                    send_sock = call.caller_socket
+                    if self.registered_user.get_by_key(send_sock):
+                        end_msg.set_header('to', self.registered_user.get_by_key(send_sock))
+                    self._send_to_client(send_sock, str(end_msg).encode())
                     del self.active_calls[call_id]
+
+                    send_sock = call.callee_socket
+                    if send_sock != self.server_socket:
+                        if self.registered_user.get_by_key(send_sock):
+                            end_msg.set_header('to', self.registered_user.get_by_key(send_sock))
+                        else:
+                            end_msg.set_header('to', 'none')
+                        self._send_to_client(send_sock, str(end_msg).encode())
+
+                        del self.active_calls[call_id]
+
+
 
                     # if the call was register then we need to remove the invalid auth challenge
                     if call.uri in self.pending_auth:
@@ -756,11 +795,11 @@ class SIPServer:
                     msg = KEEP_ALIVE_MSG
                     call_id = generate_random_call_id()
                     msg.set_header('call-id', call_id)
-
+                    print(f"sending: {msg}")
                     self._send_to_client(sock, str(msg).encode())
                     keep_alive_obj = KeepAlive(call_id, 1, sock)
                     self.pending_keep_alive[call_id] = keep_alive_obj
-            time.sleep(30)
+            time.sleep(5)
 
     def _close_connection(self, sock):
         print("closing connection!")
@@ -780,9 +819,9 @@ class SIPServer:
                         with self.reg_lock:
                             if self.registered_user.get_by_key(send_sock):
                                 to_uri = self.registered_user.get_by_key(send_sock)
-                                end_msg = SIPMsgFactory.create_response(SIPStatusCode.NOT_FOUND, SIP_VERSION,
+                                end_msg = SIPMsgFactory.create_response(SIPStatusCode.DOES_NOT_EXIST_ANYWHERE, SIP_VERSION,
                                                                         SIPMethod.OPTIONS,
-                                                                        SIPMethod.INVITE, to_uri, SERVER_URI, call)
+                                                                        SIPMethod.INVITE, to_uri, SERVER_URI, call.call_id)
                                 self._send_to_client(sock, str(end_msg).encode())
 
                     if call.uri in self.pending_auth:

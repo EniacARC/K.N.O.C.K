@@ -69,7 +69,7 @@ MAX_PASSES_BODY = 1000
 
 
 
-class SIPHandler():
+class SIPHandler:
     def __init__(self, username, password):
         self.uri = username
         self.password = password
@@ -92,7 +92,6 @@ class SIPHandler():
         """Establish connection to the SIP server"""
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.setblocking(False)
             self.socket.connect((self.server_ip, self.server_port))
             print(f"Connected to server {self.server_ip}:{self.server_port}")
             self.connected = True
@@ -114,13 +113,14 @@ class SIPHandler():
             readable, _, _ = select.select([self.socket], [], [], 0.5)
             for sock in readable:
                 msg = receive_tcp_sip(sock, MAX_PASSES_META, MAX_PASSES_BODY)
+                print(type(msg))
                 if isinstance(msg, SIPRequest):
-                    if msg.method == SIPMethod.OPTIONS:
+                    if msg.method == SIPMethod.OPTIONS.value:
                         # keep alive
                         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri)
                         send_sip_tcp(self.socket, str(res).encode())
 
-                    elif msg.method == SIPMethod.INVITE:
+                    elif msg.method == SIPMethod.INVITE.value:
                         if self.current_call_id is not None:
                             # Already in call, reject new
                             res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.DECLINE, self.uri)
@@ -201,7 +201,6 @@ class SIPHandler():
             return None
 
         header = header[7:].strip()
-        print(header)
 
         # Regex for key="value" or key=value (handles both quoted/unquoted)
         pattern = re.compile(r'(\w+)=("([^"\\]*(\\.[^"\\]*)*)"|[^,]+)')
@@ -219,6 +218,7 @@ class SIPHandler():
 
         return parsed
     def send_auth_response(self, msg):
+        print('auth')
         if self.call_type == SIPCallType.INVITE:
             method = SIPMethod.INVITE
         else:
@@ -235,8 +235,7 @@ class SIPHandler():
         else:
             response = self.auth_authority.calculate_hash_auth(self.uri, method, nonce, realm)
 
-            auth_header = f'digest username="{self.uri}", realm="{realm}, nonce="{nonce}", response="{response}"'
-
+            auth_header = f'digest username="{self.uri}", realm="{realm}", nonce="{nonce}", response="{response}"'
 
             req = SIPMsgFactory.create_request(method,
                                            SIP_VERSION,
@@ -244,15 +243,19 @@ class SIPHandler():
                                            msg.get_header('to'),
                                            self.current_call_id,
                                            cseq,
-                                           [auth_header])
+                                               {'www-authenticate': auth_header})
+
             send_sip_tcp(self.socket, str(req).encode())
+
     def process_response(self, msg):
+        print(msg)
         # Process responses for current call if needed
-        if self.call_state == SIPCallState.WAITING_AUTH and msg.status_code == SIPStatusCode.PROXY_AUTHENTICATION_REQUIRED:
+        if self.call_state == SIPCallState.WAITING_AUTH and msg.status_code == SIPStatusCode.UNAUTHORIZED:
             # we need to send auth response
             self.send_auth_response(msg)
         elif self.call_type == SIPCallType.REGISTER:
               if msg.status_code == SIPStatusCode.OK:
+                print("yes!!")
                 # register was successful
                 self.clear_call()
         elif self.call_type == SIPCallType.INVITE:
@@ -274,6 +277,10 @@ class SIPHandler():
                 send_sip_tcp(self.socket, str(res).encode())
                 self.clear_call()
 
+        elif msg.status_code == SIPStatusCode.DOES_NOT_EXIST_ANYWHERE:
+            # the call was terminated in the server
+            self.clear_call()
+
 
 
 
@@ -288,3 +295,12 @@ class SIPHandler():
 
     def allocate_port(self):
         pass
+
+hand = SIPHandler('asc', 'cedf3')
+hand.connect()
+req = SIPMsgFactory.create_request(SIPMethod.REGISTER, SIP_VERSION, SERVER_URI, hand.uri, "1233", 1)
+hand.current_call_id = "1233"
+hand.call_type = SIPCallType.REGISTER
+hand.call_state = SIPCallState.WAITING_AUTH
+print(send_sip_tcp(hand.socket, str(req).encode()))
+hand.start()

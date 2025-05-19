@@ -31,4 +31,4 @@ class AuthService:
             realm = self.name
         ha1 = self._get_ha1(username)
         ha2 = str(self._get_ha2(method, realm))
-        return str(hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()))
+        return hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()
