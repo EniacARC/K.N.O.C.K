@@ -1,11 +1,14 @@
+import random
 import re
+import string
+
 
 class SDP:
     REQUIRED = {'v', 'o', 'c', 'm'}
     SDP_FORMAT = r'^[v,o,c,m].*?=.*'
 
     def __init__(self, version, ip, session_id, video_port=None, video_format=None, audio_port=None, audio_format=None):
-        self.version = version
+        self.version = version # usually 0
         self.ip = ip
         self.video_port = video_port
         self.video_format = video_format
@@ -101,9 +104,13 @@ class SDP:
             return None
 
     def to_string(self):
-        lines = [f"v={self.version}", f"o=- {self.session_id} 1 IN IP4 {self.ip}", f"c=IN IP4 {self.ip}"]
+        lines = [f"v={self.version}", f"o=- {self.session_id} IN IP4 {self.ip}", f"c=IN IP4 {self.ip}"]
         if self.audio_port and self.audio_format:
             lines.append(f"m=audio {self.audio_port} RTP/AVP {self.audio_format}")
         if self.video_port and self.video_format:
             lines.append(f"m=video {self.video_port} RTP/AVP {self.video_format}")
         return "\n".join(lines)
+
+    @staticmethod
+    def generate_session_id():
+        ''.join(random.choices(string.digits, k=16))

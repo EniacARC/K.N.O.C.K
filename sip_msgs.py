@@ -326,7 +326,7 @@ class SIPMsgFactory:
         return req_object
 
     @staticmethod
-    def create_response_from_request(request, status_code, from_uri, additional_headers=None):
+    def create_response_from_request(request, status_code, from_uri, additional_headers=None, body=None):
         res_object = SIPResponse()
         res_object.status_code = status_code
         if additional_headers:
@@ -340,8 +340,8 @@ class SIPMsgFactory:
         res_object.set_header('call-id', request.get_header('call-id'))
         res_object.set_header('cseq', request.get_header('cseq'))
 
-        if request.body:
-            res_object.set_body(request.body)
+        if body:
+            res_object.set_body(body)
         else:
             # default content-length value if not body
             res_object.set_header('content-length', 0)

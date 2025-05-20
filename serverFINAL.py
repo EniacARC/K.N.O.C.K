@@ -682,6 +682,11 @@ class SIPServer:
                     # this is if the call goes accordingly
                     if call.call_state == SIPCallState.TRYING and res.status_code == SIPStatusCode.RINGING:
                         call.call_state = SIPCallState.RINGING
+
+                    elif call.call_state == SIPCallState.RINGING and res.status_code == SIPStatusCode.DECLINE:
+                        print("call declined!")
+                        with self.call_lock:
+                            del self.active_calls[call_id] # the call was declined, remove call send decline to other side
                     elif call.call_state == SIPCallState.RINGING and res.status_code == SIPStatusCode.OK:
                         call.call_state = SIPCallState.WAITING_ACK
                         if not res.body:
