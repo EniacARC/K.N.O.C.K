@@ -24,6 +24,7 @@ class RTPManager(ControllerAware):
         self.recv_video = None
 
         self.running = False
+        self.threads = []
 
         self.recv_audio_queue = Queue.queue() # (timestamp, frame)
         self.recv_video_queue = Queue.queue() # (timestamp, frame)
@@ -69,6 +70,8 @@ class RTPManager(ControllerAware):
 
     def clear_ports(self):
         self.used_ports = []
+        self.threads = []
+        self.running = False
         self.send_ip = None
         self.send_audio = None
         self.send_video = None
@@ -77,11 +80,13 @@ class RTPManager(ControllerAware):
 
     def start_rtp_comms(self):
         self.running = True
-        threads = []
         if self.send_video:
-            threads.append(threading.Thread(target=self._send_audio))
+            self.threads.append(threading.Thread(target=self._send_audio))
         if self.recv_audio:
-            threads.append(threading.Thread(target=self._recv_audio))
+            self.threads.append(threading.Thread(target=self._recv_audio))
+
+        for thread in self.threads:
+            thread.start()
 
     def _send_audio(self):
         # mabye rtpHandler for all audio/all video
@@ -112,6 +117,15 @@ class RTPManager(ControllerAware):
                 self.recv_audio_queue.put(frame)
             except Queue.empty:
                 continue
+
+    def get_next_audio_frame(self):
+        return self.recv_audio_queue.get() # blocking
+
+    def stop(self):
+        self.running = False
+        for thread in self.threads:
+            thread.join()
+        self.clear_ports()
 
 
 

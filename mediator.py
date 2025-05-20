@@ -53,10 +53,20 @@ class Mediator:
         if not self.rtp_manager:
             raise RuntimeError("RTP manager not registered")
         return self.rtp_manager.get_recv_video()
+
     def clear_rtp_ports(self):
         if not self.rtp_manager:
             raise RuntimeError("RTP manager not registered")
         self.rtp_manager.clear_ports()
+
+    def start_stream(self):
+        self.rtp_manager.start_rtp_comms()
+    def stop_rtp_stream(self):
+        self.rtp_manager.stop()
+
+    # define gui -> rtp_manager
+    def get_next_audio_frame(self):
+        return self.rtp_manager.get_next_audio_frame() # this is blocking
 
     # define sip_client -> gui
     # def answer_call(self, msg):
