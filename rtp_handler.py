@@ -11,13 +11,11 @@ MAX_PACKET_SIZE = int(1500)
 
 class RTPHandler:
 
-    def __init__(self, send_ip, listen_port, send_port, msg_type):
+    def __init__(self, send_ip, listen_port, send_port):
         self.running = False
         self.send_ip = send_ip
         self.listen_port = listen_port
         self.send_port = send_port
-
-        self.msg_type = msg_type.value
 
         self.receive_lock = threading.Lock()
 
@@ -98,12 +96,12 @@ class RTPHandler:
                             # If the timestamp changed, drop the old frame
                             if packet.sequence_number != self.remote_seq:
                                 print(f"Dropped incomplete frame: {self.recv_payload}")
-                                recv_payload = None
+                                self.recv_payload = None
 
                             # If packet belongs to current frame but is not the expected sequence number, drop frame
                             elif packet.sequence_number != self.remote_seq:
                                 print(f"Missing packet, dropped frame: {self.recv_payload}")
-                                recv_payload = None
+                                self.recv_payload = None
 
                         # Continue based on whether this is a marker (last fragment) or not
                         if packet.marker:
@@ -114,10 +112,10 @@ class RTPHandler:
                                 recv_payload = None
                             else:
                                 # Full packet in one go, no fragmentation
-                                self.receive_queue.put(recv_payload)
+                                self.receive_queue.put(self.recv_payload)
                         else:
                             # Intermediate or first fragment
-                            if recv_payload:
+                            if self.recv_payload:
                                 # Append fragment
                                 self.recv_payload.payload += packet.payload
                                 self.remote_seq += 1

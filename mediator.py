@@ -29,6 +29,10 @@ class Mediator:
         rtp_manager.set_controller(self)
 
     # define sip_client -> rtp_manager interactions
+    def set_remote_ip(self, ip):
+        if not self.rtp_manager:
+            raise RuntimeError("RTP manager not registered")
+        self.rtp_manager.set_ip(ip)
     def set_send_audio(self, audio_port):
         if not self.rtp_manager:
             raise RuntimeError("RTP manager not registered")

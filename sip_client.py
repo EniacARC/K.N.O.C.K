@@ -123,6 +123,8 @@ class SIPHandler(ControllerAware):
                 self.call_state = SIPCallState.WAITING_ACK
                 sdp_recv = SDP.parse(msg.body)
                 if sdp_recv:
+                    self.controller.set_remote_ip(sdp_recv.ip)
+
                     if sdp_recv.audio_port:
                         self.controller.set_send_audio(sdp_recv.audio_port)
                     if sdp_recv.video_port:
@@ -251,8 +253,18 @@ class SIPHandler(ControllerAware):
             elif self.call_state == SIPCallState.RINGING and msg.status_code == SIPStatusCode.DECLINE:
                 self.clear_call() # the uac declined
             elif self.call_state == SIPCallState.RINGING and msg.status_code == SIPStatusCode.OK:
-                self.call_state = SIPCallState.IN_CALL
-                # start rtp call
+                # parse sdp
+                sdp_recv = SDP.parse(msg.body)
+                if sdp_recv:
+                    self.controller.set_remote_ip(sdp_recv.ip)
+
+                    if sdp_recv.audio_port:
+                        self.controller.set_send_audio(sdp_recv.audio_port)
+                    if sdp_recv.video_port:
+                        self.controller.set_send_video(sdp_recv.video_port)
+
+                    self.call_state = SIPCallState.IN_CALL
+                    # start rtp call
 
             # cancel responses
             elif self.call_state == SIPCallState.INIT_CANCEL and msg.status_code == SIPStatusCode.OK:
