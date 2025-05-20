@@ -1,6 +1,7 @@
 import socket
 import threading
 import time
+from idlelib.debugger_r import gui_adap_oid
 
 import select
 from abc import ABC, abstractmethod
@@ -10,6 +11,7 @@ from sip_msgs import *
 from authentication import *
 from rtp_manager import *
 from sdp_class import *
+from mediator import ControllerAware, Mediator
 SERVER_IP = '127.0.0.1'
 SERVER_PORT = 4552
 SIP_VERSION = "SIP/2.0"
@@ -17,8 +19,13 @@ SERVER_URI = "myserver"
 MAX_PASSES_META = 8000  # 8 kb
 MAX_PASSES_BODY = 1000
 
-class SIPHandler:
+
+
+
+class SIPHandler(ControllerAware):
     def __init__(self, username, password):
+        super().__init__()
+
         self.uri = username
         self.password = password
         self.server_ip = SERVER_IP
@@ -34,7 +41,7 @@ class SIPHandler:
         self.call_state = None
 
         self.auth_authority = AuthService(SERVER_URI)
-        self.rtp_manager = RTPManager()
+        # self.rtp_manager = RTPManager()
 
 
     def connect(self):
@@ -117,15 +124,15 @@ class SIPHandler:
                 sdp_recv = SDP.parse(msg.body)
                 if sdp_recv:
                     if sdp_recv.audio_port:
-                        self.rtp_manager.send_audio(sdp_recv.audio_port)
+                        self.controller.set_send_audio(sdp_recv.audio_port)
                     if sdp_recv.video_port:
-                        self.rtp_manager.send_audio(sdp_recv.video_port)
+                        self.controller.set_send_video(sdp_recv.video_port)
 
-                self.rtp_manager.set_recv_ports(video=True, audio=True)
+                self.controller.set_recv_ports(video=True, audio=True)
 
                 local_sdp = SDP(0, '127.0.0.1', sdp_recv.session_id,
-                       video_port=self.rtp_manager.recv_video, video_format='h.264', # maybe not(?)
-                       audio_port=self.rtp_manager.recv_audio, audio_format='acc' # not the real format
+                       video_port=self.controller.get_recv_video_port(), video_format='h.264', # maybe not(?)
+                       audio_port=self.controller.get_recv_audio_port(), audio_format='acc' # not the real format
                        )
 
                 res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri, body=str(local_sdp))
@@ -149,6 +156,8 @@ class SIPHandler:
         if send_sip_tcp(self.socket, str(res).encode()):
             self.call_state = SIPCallState.RINGING
             # call gui for answer (using event, not blocking main thread for recv)
+
+            # self.controller.answer_call(msg)
             self.answer_call(msg, True)
 
 
@@ -267,10 +276,10 @@ class SIPHandler:
         call_id = generate_random_call_id()
         session_id = SDP.generate_session_id()
 
-        self.rtp_manager.set_recv_ports(True, True)
+        self.controller.set_recv_ports(True, True)
         sdp_body = SDP(0, '127.0.0.1', session_id,
-                       video_port=self.rtp_manager.recv_video, video_format='h.264', # maybe not(?)
-                       audio_port=self.rtp_manager.recv_audio, audio_format='acc' # not the real format
+                       video_port=self.controller.get_recv_video_port(), video_format='h.264', # maybe not(?)
+                       audio_port=self.controller.get_recv_audio_port(), audio_format='acc' # not the real format
                        )
 
         req = SIPMsgFactory.create_request(SIPMethod.INVITE, SIP_VERSION, uri, self.uri, call_id, 1, body=str(sdp_body))
@@ -284,7 +293,7 @@ class SIPHandler:
         self.current_call_id = None
         self.call_type = None
         self.call_state = None
-        self.rtp_manager.clear_ports()
+        self.controller.clear_rtp_ports()
 
 
 

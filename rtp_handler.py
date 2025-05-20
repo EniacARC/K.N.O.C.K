@@ -27,6 +27,7 @@ class RTPHandler:
 
         # should be thread safe if 1 thread is reading only and one is writing only
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 2 ** 20)
 
         self.receive_thread = None
         self.send_thread = None
@@ -67,13 +68,14 @@ class RTPHandler:
             #     print("dropped")
             #     self.my_seq += 1
             #     return
+
+            # packet: RTPPacket
             packet.sequence_number = self.my_seq
             # if packet is bigger than mmu split packet
-            data = packet.build_packet()
-            # print(f"sending: {packet} to {self.send_ip}:{self.send_port}")
-            self.socket.sendto(data, (self.send_ip, self.send_port))
-            # time.sleep(0.003)
-            self.my_seq += 1
+            pkts = self._build_packets(packet.ssrc, packet.payload)
+            for pkt in pkts:
+                self.socket.sendto(pkt.build_packet(), (self.send_ip, self.send_port))
+                self.my_seq += 1
         except Exception as e:
             print(f"Error in send loop: {e}")
 
@@ -83,55 +85,56 @@ class RTPHandler:
             try:
                 # Set a timeout so we can check running flag periodically
                 self.socket.settimeout(0.5)
-
                 try:
                     data, addr = self.socket.recvfrom(MAX_PACKET_SIZE)  # Max UDP packet size
+                    # self.receive_queue.put(data) # thread safe
+
+                    # build fragmented packets, only add a full frame
+                    packet = RTPPacket()
+                    if packet.decode_packet(data):
+                        # print(packet)
+                        # Case 1: A previous frame is being built
+                        if self.recv_payload:
+                            # If the timestamp changed, drop the old frame
+                            if packet.sequence_number != self.remote_seq:
+                                print(f"Dropped incomplete frame: {self.recv_payload}")
+                                recv_payload = None
+
+                            # If packet belongs to current frame but is not the expected sequence number, drop frame
+                            elif packet.sequence_number != self.remote_seq:
+                                print(f"Missing packet, dropped frame: {self.recv_payload}")
+                                recv_payload = None
+
+                        # Continue based on whether this is a marker (last fragment) or not
+                        if packet.marker:
+                            if self.recv_payload:
+                                # Append and complete the current frame
+                                self.recv_payload.payload += packet.payload
+                                self.receive_queue.put(self.recv_payload)
+                                recv_payload = None
+                            else:
+                                # Full packet in one go, no fragmentation
+                                self.receive_queue.put(recv_payload)
+                        else:
+                            # Intermediate or first fragment
+                            if recv_payload:
+                                # Append fragment
+                                self.recv_payload.payload += packet.payload
+                                self.remote_seq += 1
+                            else:
+                                # Start a new fragmented frame
+                                self.recv_payload = packet
+                                self.remote_seq = packet.sequence_number + 1
+
                 except socket.timeout:
                     continue
 
                 # Parse the received packet
-                packet = RTPPacket()
-                if packet.decode_packet(data):
-                    print(packet)
-                    # Case 1: A previous frame is being built
-                    if self.recv_payload:
-                        # If the timestamp changed, drop the old frame
-                        if packet.sequence_number != self.remote_seq:
-                            print(f"Dropped incomplete frame: {self.recv_payload}")
-                            self.recv_payload = None
-
-                        # If packet belongs to current frame but is not the expected sequence number, drop frame
-                        elif packet.sequence_number != self.remote_seq:
-                            print(f"Missing packet, dropped frame: {self.recv_payload}")
-                            self.recv_payload = None
-
-                    # Continue based on whether this is a marker (last fragment) or not
-                    if packet.marker:
-                        if self.recv_payload:
-                            # Append and complete the current frame
-                            self.recv_payload.payload += packet.payload
-                            with self.receive_lock:
-                                self.receive_queue.put(self.recv_payload)
-                            self.recv_payload = None
-                        else:
-                            # Full packet in one go, no fragmentation
-                            with self.receive_lock:
-                                self.receive_queue.put(packet)
-                    else:
-                        # Intermediate or first fragment
-                        if self.recv_payload:
-                            # Append fragment
-                            self.recv_payload.payload += packet.payload
-                            self.remote_seq += 1
-                        else:
-                            # Start a new fragmented frame
-                            self.recv_payload = packet
-                            self.remote_seq = packet.sequence_number + 1
             except Exception as e:
                 print(f"Error in receive loop: {e}")
 
-    @staticmethod
-    def build_packets(ssrc, payload):
+
+    def _build_packets(self, ssrc, payload):
         to_send = []
         timestamp = RTPPacket().timestamp
         m = RTPPacket()
@@ -174,3 +177,39 @@ class RTPHandler:
             to_send.append(packet)
 
         return to_send
+
+
+# import time
+#
+#
+# class RTPTimestampSync:
+#     def __init__(self, clock_rate: int):
+#         """
+#         clock_rate: RTP clock rate (Hz), e.g., 90000 for video, 48000 for audio
+#         """
+#         self.clock_rate = clock_rate
+#
+#         # Choose a reference start time in seconds (wall clock)
+#         # This will be the zero RTP timestamp reference point
+#         self.start_time = time.time()
+#
+#         # Optionally: initial RTP timestamp (randomized or zero)
+#         self.initial_timestamp = 0
+#
+#     def get_timestamp(self) -> int:
+#         """
+#         Returns the current RTP timestamp based on elapsed time scaled to clock rate
+#         """
+#         elapsed = time.time() - self.start_time
+#         timestamp = int(elapsed * self.clock_rate)
+#         return (self.initial_timestamp + timestamp) & 0xFFFFFFFF  # RTP timestamp is 32 bits
+#
+#
+# # Usage example:
+#
+# video_sync = RTPTimestampSync(clock_rate=90000)  # Video RTP clock rate
+# audio_sync = RTPTimestampSync(clock_rate=48000)  # Audio RTP clock rate
+#
+# # When you need to timestamp a packet:
+# video_rtp_ts = video_sync.get_timestamp()
+# audio_rtp_ts = audio_sync.get_timestamp()

@@ -1,9 +1,12 @@
 import random
 import socket
+from mediator import ControllerAware
+from rtp_handler import
 
-
-class RTPManager:
+class RTPManager(ControllerAware):
     def __init__(self):
+
+        super().__init__()
         self.used_ports = []
 
         # remote ports
@@ -13,6 +16,8 @@ class RTPManager:
         # my ports
         self.recv_audio = None
         self.recv_video = None
+
+        # rtp handler objects
 
     def allocate_port(self):
         for _ in range(100):
@@ -43,9 +48,18 @@ class RTPManager:
         if video:
             self.recv_video = self.allocate_port()
 
+    def get_recv_audio(self):
+        return self.recv_audio
+    def get_recv_video(self):
+        return self.recv_video
+
     def clear_ports(self):
         self.used_ports = []
         self.send_audio = None
         self.send_video = None
         self.recv_audio = None
         self.recv_video = None
+
+    def start_rtp_comms(self):
+        if self.recv_video and self.send_video:
+            # start
