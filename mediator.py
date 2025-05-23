@@ -36,7 +36,7 @@ class Mediator(MediatorInterface):
     def set_recv_ports(self, audio=False, video=False):
         if not self.rtp_manager:
             raise RuntimeError("RTP manager not registered")
-        self.rtp_manager.set_recv_ports()
+        self.rtp_manager.set_recv_ports(audio=audio, video=video)
     def get_recv_audio_port(self):
         if not self.rtp_manager:
             raise RuntimeError("RTP manager not registered")

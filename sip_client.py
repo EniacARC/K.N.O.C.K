@@ -90,6 +90,7 @@ class SIPHandler(ControllerAware):
                         if self.current_call_id is not None:
                             # start rtp stream
                             self.call_state = SIPCallState.IN_CALL # redundant
+                            print("start stream")
                             self.controller.start_stream()
 
                     elif msg.get_header('call-id') == self.current_call_id:
@@ -117,6 +118,7 @@ class SIPHandler(ControllerAware):
             self.process_bye(msg)
 
     def answer_call(self, msg, answer_call):
+        print("answring call")
         print(msg)
         # answer = input(f"Do you accept call from {who}? Y/N ")
         # if by the time we answer we get a cancel request then we will be able to process it, the server will return an error msg
@@ -124,6 +126,8 @@ class SIPHandler(ControllerAware):
             if answer_call:
                 self.call_state = SIPCallState.WAITING_ACK
                 sdp_recv = SDP.parse(msg.body)
+                print("the parsed sdp")
+                print(sdp_recv)
                 if sdp_recv:
                     self.controller.set_remote_ip(sdp_recv.ip)
 
@@ -140,6 +144,7 @@ class SIPHandler(ControllerAware):
                        )
 
                 res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri, body=str(local_sdp))
+                print(res)
                 send_sip_tcp(self.socket, str(res).encode())
                 return
 
@@ -276,6 +281,7 @@ class SIPHandler(ControllerAware):
                     if send_sip_tcp(self.socket, str(ack_request).encode()):
                         self.call_state = SIPCallState.IN_CALL
                         # start rtp call
+                        print("start stream")
                         self.controller.start_stream()
 
             # cancel responses
@@ -307,6 +313,7 @@ class SIPHandler(ControllerAware):
                        )
 
         req = SIPMsgFactory.create_request(SIPMethod.INVITE, SIP_VERSION, uri, self.uri, call_id, 1, body=str(sdp_body))
+        print("inviting")
         print(req)
         self.current_call_id = call_id
         self.call_type = SIPCallType.INVITE

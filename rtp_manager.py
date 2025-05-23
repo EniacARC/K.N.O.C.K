@@ -46,7 +46,7 @@ class RTPManager(ControllerAware):
             try:
                 sock.bind(('0.0.0.0', port))
                 return True
-            except OSError:
+            except Exception:
                 return False
 
     def set_ip(self, ip):
@@ -62,6 +62,7 @@ class RTPManager(ControllerAware):
     def set_recv_ports(self, video=False, audio=False):
         if audio:
             self.recv_audio = self.allocate_port()
+            print(self.recv_audio)
         if video:
             self.recv_video = self.allocate_port()
 

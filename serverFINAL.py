@@ -829,7 +829,7 @@ class SIPServer:
                     self._send_to_client(sock, str(msg).encode())
                     keep_alive_obj = KeepAlive(call_id, 1, sock)
                     self.pending_keep_alive[call_id] = keep_alive_obj
-            time.sleep(10)
+            time.sleep(30)
 
     def _close_connection(self, sock):
         print("closing connection!")
