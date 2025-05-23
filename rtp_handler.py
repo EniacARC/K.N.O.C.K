@@ -11,7 +11,7 @@ MAX_PACKET_SIZE = int(1500)
 
 class RTPHandler:
 
-    def __init__(self, send_ip, listen_port, send_port):
+    def __init__(self, send_ip, ssrc=None, listen_port=None, send_port=None):
         self.running = False
         self.send_ip = send_ip
         self.listen_port = listen_port
@@ -32,9 +32,9 @@ class RTPHandler:
 
         self.my_seq = random.randint(0, 50000)
         self.remote_seq = None
-        # self.ssrc = random.randint(0, 50000) # will be selected from the sending thread
+        self.ssrc = ssrc if ssrc else ssrc == random.randint(0, 50000) # identifies src
 
-    def start(self, receive):
+    def start(self):
         if self.running:
             return
 
@@ -43,7 +43,7 @@ class RTPHandler:
         self.socket.bind(('0.0.0.0', self.listen_port))
         self.socket.settimeout(0.5)  # make sure we can check running flag
 
-        if receive:
+        if self.listen_port:
             self.receive_thread = threading.Thread(target=self._receive_loop)
             self.receive_thread.start()
 
@@ -58,8 +58,9 @@ class RTPHandler:
         self.socket.close()
         print("RTP Handler stopped")
 
-    def send_packet(self, packet):
+    def send_packet(self, data):
         """Thread function to send RTP packets"""
+        """get data in bytes"""
         try:
             # the sequence number is not controlled by the high logic but by transport logic, so it belongs here.
             # if random.randint(1, 100) == 2:
@@ -68,10 +69,11 @@ class RTPHandler:
             #     return
 
             # packet: RTPPacket
-            packet.sequence_number = self.my_seq
+            # packet.sequence_number = self.my_seq
             # if packet is bigger than mmu split packet
-            pkts = self._build_packets(packet.ssrc, packet.payload)
+            pkts = self._build_packets(data)
             for pkt in pkts:
+                pkt.sequence_number = self.my_seq
                 self.socket.sendto(pkt.build_packet(), (self.send_ip, self.send_port))
                 self.my_seq += 1
         except Exception as e:
@@ -109,7 +111,8 @@ class RTPHandler:
                                 # Append and complete the current frame
                                 self.recv_payload.payload += packet.payload
                                 self.receive_queue.put(self.recv_payload)
-                                recv_payload = None
+                                self.recv_payload = None
+                                self.remote_seq = None
                             else:
                                 # Full packet in one go, no fragmentation
                                 self.receive_queue.put(self.recv_payload)
@@ -132,7 +135,7 @@ class RTPHandler:
                 print(f"Error in receive loop: {e}")
 
 
-    def _build_packets(self, ssrc, payload):
+    def _build_packets(self, payload):
         to_send = []
         timestamp = RTPPacket().timestamp
         m = RTPPacket()
@@ -152,7 +155,7 @@ class RTPHandler:
             for payload1 in payloads[:-1]:  # All except the last
                 packet = RTPPacket(
                     timestamp = timestamp,
-                    ssrc = ssrc
+                    ssrc = self.ssrc
                 )
                 packet.payload = payload1
                 packet.marker = False
@@ -161,7 +164,7 @@ class RTPHandler:
             # Send the last payload with marker = True
             packet = RTPPacket(
                 timestamp=timestamp,
-                ssrc=ssrc
+                ssrc = self.ssrc
             )
             packet.payload = payloads[-1]
             packet.marker = True
@@ -169,7 +172,7 @@ class RTPHandler:
         else:
             packet = RTPPacket(
                 timestamp = timestamp,
-                ssrc = ssrc
+                ssrc = self.ssrc
             )
             packet.payload = payload
             to_send.append(packet)

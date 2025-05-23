@@ -1,17 +1,13 @@
 import socket
 import threading
-import time
-from idlelib.debugger_r import gui_adap_oid
 
 import select
-from abc import ABC, abstractmethod
 
 from comms import receive_tcp_sip, send_sip_tcp
 from sip_msgs import *
 from authentication import *
-from rtp_manager import *
 from sdp_class import *
-from mediator import ControllerAware, Mediator
+from mediator_connect import *
 SERVER_IP = '127.0.0.1'
 SERVER_PORT = 4552
 SIP_VERSION = "SIP/2.0"
@@ -90,6 +86,11 @@ class SIPHandler(ControllerAware):
                             self.call_type = SIPCallType.INVITE
                             self.call_state = None
                             self.process_invite(msg)
+                    elif msg.method == SIPMethod.ACK:
+                        if self.current_call_id is not None:
+                            # start rtp stream
+                            self.call_state = SIPCallState.IN_CALL # redundant
+                            self.controller.start_stream()
 
                     elif msg.get_header('call-id') == self.current_call_id:
                         self.process_request(msg)
@@ -116,6 +117,7 @@ class SIPHandler(ControllerAware):
             self.process_bye(msg)
 
     def answer_call(self, msg, answer_call):
+        print(msg)
         # answer = input(f"Do you accept call from {who}? Y/N ")
         # if by the time we answer we get a cancel request then we will be able to process it, the server will return an error msg
         if self.call_state == SIPCallState.RINGING: # we might get a cancel request in the meantime
@@ -263,8 +265,18 @@ class SIPHandler(ControllerAware):
                     if sdp_recv.video_port:
                         self.controller.set_send_video(sdp_recv.video_port)
 
-                    self.call_state = SIPCallState.IN_CALL
-                    # start rtp call
+                    ack_request = SIPMsgFactory.create_request(
+                        SIPMethod.ACK,
+                        SIP_VERSION,
+                        msg.get_header('from'),
+                        self.uri,
+                        self.current_call_id,
+                        msg.get_header('cseq')[0] + 1
+                    )
+                    if send_sip_tcp(self.socket, str(ack_request).encode()):
+                        self.call_state = SIPCallState.IN_CALL
+                        # start rtp call
+                        self.controller.start_stream()
 
             # cancel responses
             elif self.call_state == SIPCallState.INIT_CANCEL and msg.status_code == SIPStatusCode.OK:
@@ -282,19 +294,20 @@ class SIPHandler(ControllerAware):
         self.current_call_id = "1233"
         self.call_type = SIPCallType.REGISTER
         self.call_state = SIPCallState.WAITING_AUTH
-        send_sip_tcp(hand.socket, str(req).encode())
+        send_sip_tcp(self.socket, str(req).encode())
 
     def invite(self, uri):
         call_id = generate_random_call_id()
         session_id = SDP.generate_session_id()
 
-        self.controller.set_recv_ports(True, True)
+        self.controller.set_recv_ports(True, True) # will change to add gui events
         sdp_body = SDP(0, '127.0.0.1', session_id,
                        video_port=self.controller.get_recv_video_port(), video_format='h.264', # maybe not(?)
                        audio_port=self.controller.get_recv_audio_port(), audio_format='acc' # not the real format
                        )
 
         req = SIPMsgFactory.create_request(SIPMethod.INVITE, SIP_VERSION, uri, self.uri, call_id, 1, body=str(sdp_body))
+        print(req)
         self.current_call_id = call_id
         self.call_type = SIPCallType.INVITE
         send_sip_tcp(self.socket, str(req).encode())
@@ -309,9 +322,9 @@ class SIPHandler(ControllerAware):
 
 
 
-hand = SIPHandler('user1', 'qwe')
-hand.connect()
-hand.start()
-hand.register()
-time.sleep(5)
-hand.invite("user2")
+# hand = SIPHandler('user1', 'qwe')
+# hand.connect()
+# hand.start()
+# hand.register()
+# time.sleep(5)
+# hand.invite("user2")

@@ -338,8 +338,31 @@ class SIPServer:
         return error_msg
 
     def ack_request(self, sock, req):
+        uri_sender = req.get_header('from')
+        uri_recv = req.get_header('to')
+        call_id = req.get_header("call-id")
+        cseq = req.get_header('cseq')[0]
         # pass ack to the other side start rtp
-        pass
+        with self.call_lock:  # it's better to get the lock for the whole func instead of acquiring multiple times
+            # verify call details are the ok
+            if call_id in self.active_calls:
+                call = self.active_calls[call_id]
+                if cseq != call.cseq + 1 or call.uri != uri_recv or call.call_type != SIPCallType.INVITE and sock == call.caller_socket:
+                    error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
+                    self._send_to_client(sock, str(error_msg).encode())
+                    return
+
+                # call is valid. now we need to check which type of ack is this
+                if call.call_state == SIPCallState.WAITING_ACK:
+                    # this is an invite ack - set state to in call, pass to the other side
+                    call.call_state = SIPCallState.IN_CALL
+                    self._send_to_client(call.callee_socket, str(req).encode())
+                elif call.call_state == SIPCallState.TRYING_CANCEL:
+                    # maybe add another state for after trying
+
+                    # this is a cancel ack - delete call
+                    del self.active_calls[call_id]
+        # call verified
 
     def bye_request(self, sock, req):
         # close the call
@@ -357,7 +380,7 @@ class SIPServer:
             call = None
             if call_id in self.active_calls:
                 call = self.active_calls[call_id]
-                if cseq != call.cseq + 1 or call.uri != uri_recv or call.method != req.method or call.method != SIPMethod.INVITE or sock is not call.callee_socket or call.call_state != SIPCallState.RINGING:
+                if cseq != call.cseq + 1 or call.uri != uri_recv or call.method != req.method or call.call_type != SIPMethod.INVITE or sock is not call.callee_socket or call.call_state != SIPCallState.RINGING:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
                     return
@@ -392,7 +415,7 @@ class SIPServer:
             call = None
             if call_id in self.active_calls:
                 call = self.active_calls[call_id]
-                if cseq != call.last_used_cseq_num + 1 or call.uri != uri_recv or call.method != req.method.value or call.method != SIPMethod.INVITE or sock is not call.caller_socket:
+                if cseq != call.last_used_cseq_num + 1 or call.uri != uri_recv or call.call_type != SIPCallType.INVITE or sock is not call.caller_socket:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
                     return
@@ -491,7 +514,8 @@ class SIPServer:
             call = None
             if call_id in self.active_calls:
                 call = self.active_calls[call_id]
-                if cseq != call.last_used_cseq_num + 1 or call.uri != uri or call.call_type.value != req.method or call.call_type.value != SIPMethod.REGISTER.value or sock is not call.caller_socket:
+                if cseq != call.last_used_cseq_num + 1 or call.uri != uri or call.call_type != SIPCallType.REGISTER or sock is not call.caller_socket:
+                    print("not standart call")
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
                     return
@@ -552,6 +576,7 @@ class SIPServer:
                 # verify auth response
                 auth_header_parsed = self._parse_auth_header(auth_header)
                 if not auth_header_parsed:
+                    print("couldnt pass auth header")
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
                 else:

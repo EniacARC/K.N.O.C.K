@@ -1,16 +1,8 @@
-from rtp_manager import *
 from rtp_manager import RTPManager
-from sip_client import *
+from sip_client import SIPHandler
+from mediator_connect import MediatorInterface
 
-# use a mediator in the client to avoid tight coupling
-
-class ControllerAware:
-    def __init__(self):
-        self.controller:Mediator = None
-    def set_controller(self, controller):
-        self.controller = controller
-
-class Mediator:
+class Mediator(MediatorInterface):
     def __init__(self):
         self.gui = None
         self.rtp_manager: RTPManager = None
@@ -60,7 +52,8 @@ class Mediator:
         self.rtp_manager.clear_ports()
 
     def start_stream(self):
-        self.rtp_manager.start_rtp_comms()
+        print("started stream")
+        # self.rtp_manager.start_rtp_comms()
     def stop_rtp_stream(self):
         self.rtp_manager.stop()
 
@@ -69,6 +62,8 @@ class Mediator:
         return self.rtp_manager.get_next_audio_frame() # this is blocking
 
     # define sip_client -> gui
+
+    # in get answer it's two different func because it's event based
     # def answer_call(self, msg):
     #     answer = self.gui.answer_call()
     #     self.sip_client.answer_call(msg, answer)

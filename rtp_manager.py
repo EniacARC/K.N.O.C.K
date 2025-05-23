@@ -1,11 +1,13 @@
 import random
 import socket
 import threading
-from queue import Queue
+import time
+import queue
 
-from mediator import ControllerAware
+from mediator_connect import *
 from rtp_handler import RTPHandler
-from audio_capture import AudioHandler
+from audio_capture import AudioInput, AudioOutput
+from video_capture import VideoInput, VideoEncoder, VideoDecoder
 from RTP_msgs import RTPPacket
 
 class RTPManager(ControllerAware):
@@ -26,8 +28,8 @@ class RTPManager(ControllerAware):
         self.running = False
         self.threads = []
 
-        self.recv_audio_queue = Queue.queue() # (timestamp, frame)
-        self.recv_video_queue = Queue.queue() # (timestamp, frame)
+        self.recv_audio_queue = queue.Queue() # (timestamp, frame)
+        self.recv_video_queue = queue.Queue() # (timestamp, frame)
         # rtp handler objects
 
     def allocate_port(self):
@@ -80,46 +82,93 @@ class RTPManager(ControllerAware):
 
     def start_rtp_comms(self):
         self.running = True
-        if self.send_video:
+        if self.send_audio:
             self.threads.append(threading.Thread(target=self._send_audio))
         if self.recv_audio:
             self.threads.append(threading.Thread(target=self._recv_audio))
+
+        if self.send_video:
+            self.threads.append(threading.Thread(target=self._send_video))
+        if self.recv_video:
+            self.threads.append(threading.Thread(target=self._recv_video))
 
         for thread in self.threads:
             thread.start()
 
     def _send_audio(self):
         # mabye rtpHandler for all audio/all video
-        encoder = AudioHandler()
-        sender = RTPHandler(self.send_ip, None, self.send_audio)
-        ssrc = random.randint(50, 5000)
-        sender.start(receive=False)
+        audio_io = AudioInput()
+        sender = RTPHandler(self.send_ip, send_port=self.send_audio)
+        sender.start()
         while self.running:
             # maybe gui should send data to send?
-            payload = encoder.encode()
-            packet = RTPPacket(
-                ssrc=ssrc
-            )
-            packet.payload = payload
-            sender.send_packet(packet)
+            audio_data = audio_io.read()
+            sender.send_packet(audio_data)
 
-            # audio objects -> encode -> send using rtp_handler
+        sender.stop()
 
-            pass
+            # audio objects -> get_input -> send using rtp_handler
 
     def _recv_audio(self, decoder):
-        receiver = RTPHandler(self.send_ip, self.recv_audio, None)
-        receiver.start(receive=True)
+        receiver = RTPHandler(self.send_ip, listen_port=self.recv_audio)
+        receiver.start()
         while self.running:
-            # start rtp_handler -> add payload to recv queue in manager - use decoder in gui to play
+            # start rtp_handler -> add payload to recv queue in manager -> use AudioOutput to play in gui
             try:
-                frame = receiver.receive_queue.get(timeout=1)
-                self.recv_audio_queue.put(frame)
-            except Queue.empty:
+                frame = receiver.receive_queue.get(timeout=1).payload
+                self.recv_audio_queue.put(frame) # no need for decoding
+            except Exception:
                 continue
+
+        receiver.stop()
 
     def get_next_audio_frame(self):
         return self.recv_audio_queue.get() # blocking
+
+    def _send_video(self):
+
+        # get input -> encode -> send -> sleep(?)
+
+        video_io = VideoInput()
+        encoder = VideoEncoder()
+
+        # hard coding fps for now
+        frame_interval = 1.0 / 30.0  # 30 frames per second → 33.3 ms
+
+        sender = RTPHandler(self.send_ip, send_port=self.send_audio)
+        sender.start()
+        while self.running:
+            start_time = time.time()
+            video_frame = video_io.get_frame()
+            encoded_frame = encoder.encode(video_frame)
+            for frame in encoded_frame:
+                sender.send_packet(frame)
+
+            # SEND MAX 30 FPS
+            elapsed = time.time() - start_time
+            sleep_time = max(0.0, frame_interval - elapsed)
+            time.sleep(sleep_time)
+
+        sender.stop()
+    def _recv_video(self):
+        # start rtp_handler -> decode_packet -> play frame in gui
+        receiver = RTPHandler(self.send_ip, listen_port=self.recv_video)
+        decoder = VideoDecoder()
+        receiver.start()
+        while self.running:
+            # start rtp_handler -> add payload to recv queue in manager -> use AudioOutput to play in gui
+            try:
+                encoded_data = receiver.receive_queue.get(timeout=1).payload
+                decoded_frames = decoder.decode(encoded_data)
+                for frame in decoded_frames:
+                    self.recv_video_queue.put(frame)
+
+            except Exception:
+                continue
+
+        receiver.stop()
+    def get_next_video_frame(self):
+        return self.recv_video_queue.get()  # blocking
 
     def stop(self):
         self.running = False
