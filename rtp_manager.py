@@ -108,7 +108,6 @@ class RTPManager(ControllerAware):
         sender = RTPHandler(self.send_ip, send_port=self.send_audio)
         sender.start()
         while self.running:
-            print(f"running loop to send on {self.send_audio}")
             # maybe gui should send data to send?
             audio_data = audio_io.read() # is in bytes
             sender.send_packet(audio_data)

@@ -6,7 +6,7 @@ import av
 import cv2
 import pyaudio
 
-WIDTH, HEIGHT = 576, 432
+WIDTH, HEIGHT = 640, 480
 FPS = 30
 
 # for testing i need to create a singelton for multi threading
@@ -46,7 +46,7 @@ class VideoInput:
             ret, frame = self.cap.read()
             if not ret or frame is None:
                 return None
-            return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            return frame
 
     def close(self):
         with self._read_lock:
