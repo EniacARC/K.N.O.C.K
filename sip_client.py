@@ -68,7 +68,7 @@ class SIPHandler(ControllerAware):
             readable, _, _ = select.select([self.socket], [], [], 0.5)
             for sock in readable:
                 msg = receive_tcp_sip(sock, MAX_PASSES_META, MAX_PASSES_BODY)
-                print(msg)
+                print(f"{self.uri} recvd: {msg}")
                 if isinstance(msg, SIPRequest):
                     if msg.method == SIPMethod.OPTIONS.value:
                         # keep alive
@@ -86,12 +86,6 @@ class SIPHandler(ControllerAware):
                             self.call_type = SIPCallType.INVITE
                             self.call_state = None
                             self.process_invite(msg)
-                    elif msg.method == SIPMethod.ACK:
-                        if self.current_call_id is not None:
-                            # start rtp stream
-                            self.call_state = SIPCallState.IN_CALL # redundant
-                            print("start stream")
-                            self.controller.start_stream()
 
                     elif msg.get_header('call-id') == self.current_call_id:
                         self.process_request(msg)
@@ -113,21 +107,19 @@ class SIPHandler(ControllerAware):
         if msg.method == SIPMethod.CANCEL.value:
             self.process_cancel(msg)
         elif msg.method == SIPMethod.ACK.value:
+            print("recvd ack request")
             self.process_ack(msg)
         elif msg.method == SIPMethod.BYE.value:
             self.process_bye(msg)
 
     def answer_call(self, msg, answer_call):
         print("answring call")
-        print(msg)
         # answer = input(f"Do you accept call from {who}? Y/N ")
         # if by the time we answer we get a cancel request then we will be able to process it, the server will return an error msg
         if self.call_state == SIPCallState.RINGING: # we might get a cancel request in the meantime
             if answer_call:
                 self.call_state = SIPCallState.WAITING_ACK
                 sdp_recv = SDP.parse(msg.body)
-                print("the parsed sdp")
-                print(sdp_recv)
                 if sdp_recv:
                     self.controller.set_remote_ip(sdp_recv.ip)
 
@@ -136,7 +128,7 @@ class SIPHandler(ControllerAware):
                     if sdp_recv.video_port:
                         self.controller.set_send_video(sdp_recv.video_port)
 
-                self.controller.set_recv_ports(video=True, audio=True)
+                self.controller.set_recv_ports(audio=True)
 
                 local_sdp = SDP(0, '127.0.0.1', sdp_recv.session_id,
                        video_port=self.controller.get_recv_video_port(), video_format='h.264', # maybe not(?)
@@ -144,7 +136,7 @@ class SIPHandler(ControllerAware):
                        )
 
                 res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri, body=str(local_sdp))
-                print(res)
+                print("sending to the other side")
                 send_sip_tcp(self.socket, str(res).encode())
                 return
 
@@ -163,6 +155,7 @@ class SIPHandler(ControllerAware):
         # Accept call
         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.RINGING, self.uri)
         if send_sip_tcp(self.socket, str(res).encode()):
+            print("sent ringing")
             self.call_state = SIPCallState.RINGING
             # call gui for answer (using event, not blocking main thread for recv)
 
@@ -184,7 +177,8 @@ class SIPHandler(ControllerAware):
             self.clear_call()
         else:
             # Normal ACK handling here
-            pass
+            print("starting stream - receiver")
+            self.controller.start_stream()
 
     def _parse_auth_request(self, header):
         if not header or not header.lower().startswith("digest "):
@@ -235,7 +229,7 @@ class SIPHandler(ControllerAware):
                                            cseq,
                                                {'www-authenticate': auth_header})
 
-            print(req)
+
 
             send_sip_tcp(self.socket, str(req).encode())
 
@@ -255,13 +249,17 @@ class SIPHandler(ControllerAware):
             if self.call_state is None and msg.status_code == SIPStatusCode.TRYING:
                 self.call_state = SIPCallState.TRYING
             elif self.call_state == SIPCallState.TRYING and msg.status_code == SIPStatusCode.RINGING:
+                print("ringing")
                 self.call_state = SIPCallState.RINGING
 
             elif self.call_state == SIPCallState.RINGING and msg.status_code == SIPStatusCode.DECLINE:
                 self.clear_call() # the uac declined
             elif self.call_state == SIPCallState.RINGING and msg.status_code == SIPStatusCode.OK:
+                print("okay")
                 # parse sdp
                 sdp_recv = SDP.parse(msg.body)
+                print("recvd")
+                print(sdp_recv)
                 if sdp_recv:
                     self.controller.set_remote_ip(sdp_recv.ip)
 
@@ -278,10 +276,11 @@ class SIPHandler(ControllerAware):
                         self.current_call_id,
                         msg.get_header('cseq')[0] + 1
                     )
+                    print(f"acking: {ack_request}")
                     if send_sip_tcp(self.socket, str(ack_request).encode()):
                         self.call_state = SIPCallState.IN_CALL
                         # start rtp call
-                        print("start stream")
+                        print("start stream - send")
                         self.controller.start_stream()
 
             # cancel responses
@@ -306,7 +305,7 @@ class SIPHandler(ControllerAware):
         call_id = generate_random_call_id()
         session_id = SDP.generate_session_id()
 
-        self.controller.set_recv_ports(True, True) # will change to add gui events
+        self.controller.set_recv_ports(audio=True) # will change to add gui events
         sdp_body = SDP(0, '127.0.0.1', session_id,
                        video_port=self.controller.get_recv_video_port(), video_format='h.264', # maybe not(?)
                        audio_port=self.controller.get_recv_audio_port(), audio_format='acc' # not the real format

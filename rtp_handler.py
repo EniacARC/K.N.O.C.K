@@ -40,15 +40,13 @@ class RTPHandler:
 
         self.running = True
 
-        self.socket.bind(('0.0.0.0', self.listen_port))
-        self.socket.settimeout(0.5)  # make sure we can check running flag
-
         if self.listen_port:
+            self.socket.bind(('0.0.0.0', self.listen_port))
+            # self.socket.settimeout(0.5)  # make sure we can check running flag
             self.receive_thread = threading.Thread(target=self._receive_loop)
             self.receive_thread.start()
 
-        print(
-            f"RTP Handler started - Listening on port {self.listen_port}, sending to {self.send_ip}:{self.send_port}")
+        print(f"RTP Handler started - Listening on port {self.listen_port}, sending to {self.send_ip}:{self.send_port}")
 
     def stop(self):
         """Stop the RTP handler threads"""

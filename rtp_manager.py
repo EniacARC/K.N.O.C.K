@@ -82,11 +82,13 @@ class RTPManager(ControllerAware):
         self.recv_video = None
 
     def start_rtp_comms(self):
+        print(f"audio - send:{self.send_audio} recv:{self.recv_audio}")
+        print(f"video - send:{self.send_video} recv:{self.recv_video}")
+
         self.running = True
         if self.send_audio:
+            print("send audio")
             self.threads.append(threading.Thread(target=self._send_audio))
-        if self.recv_audio:
-            self.threads.append(threading.Thread(target=self._recv_audio))
 
         if self.send_video:
             self.threads.append(threading.Thread(target=self._send_video))
@@ -102,22 +104,28 @@ class RTPManager(ControllerAware):
         sender = RTPHandler(self.send_ip, send_port=self.send_audio)
         sender.start()
         while self.running:
+            print(f"running loop to send on {self.send_audio}")
             # maybe gui should send data to send?
             audio_data = audio_io.read()
             sender.send_packet(audio_data)
+            print(audio_data)
 
         sender.stop()
+        audio_io.close()
 
             # audio objects -> get_input -> send using rtp_handler
 
-    def _recv_audio(self, decoder):
+    def _recv_audio(self):
         receiver = RTPHandler(self.send_ip, listen_port=self.recv_audio)
         receiver.start()
+
+        decoder = AudioOutput()
         while self.running:
             # start rtp_handler -> add payload to recv queue in manager -> use AudioOutput to play in gui
             try:
                 frame = receiver.receive_queue.get(timeout=1).payload
-                self.recv_audio_queue.put(frame) # no need for decoding
+                # self.recv_audio_queue.put(frame) # no need for decoding
+                decoder.write(frame)
             except Exception:
                 continue
 

@@ -52,8 +52,7 @@ class Mediator(MediatorInterface):
         self.rtp_manager.clear_ports()
 
     def start_stream(self):
-        print("started stream")
-        # self.rtp_manager.start_rtp_comms()
+        self.rtp_manager.start_rtp_comms()
     def stop_rtp_stream(self):
         self.rtp_manager.stop()
 
