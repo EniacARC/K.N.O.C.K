@@ -240,12 +240,12 @@ class RTPPacket:
         self.payload = b''
 
     def build_packet(self):
-
         # First byte: version (2 bits), padding (1 bit), extension (1 bit), CSRC count (4 bits)
         first_byte = (self.version << 6) | (self.padding << 5) | (self.extension << 4) | (self.cc & 0x0F)
 
         # Second byte: marker (1 bit), payload type (7 bits)
         second_byte = (self.marker << 7) | (self.payload_type & 0x7F)
+
         # Build the header
         header = struct.pack('!BBHII',
                              first_byte,
@@ -253,6 +253,8 @@ class RTPPacket:
                              self.sequence_number,
                              self.timestamp,
                              self.ssrc)
+
+
 
         # Combine everything
         packet = header + self.payload
@@ -263,6 +265,8 @@ class RTPPacket:
             # Last byte of padding contains the number of padding bytes
             padding = bytes([0] * (padding_len - 1) + [padding_len])
             packet += padding
+
+
         return packet
 
     def set_payload(self, payload):

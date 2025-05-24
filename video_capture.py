@@ -1,3 +1,4 @@
+import threading
 from fractions import Fraction
 from queue import Queue
 from abc import ABC, abstractmethod
@@ -8,22 +9,70 @@ import pyaudio
 WIDTH, HEIGHT = 576, 432
 FPS = 30
 
+# for testing i need to create a singelton for multi threading
 class VideoInput:
+    _instance = None
+    _instance_lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            with cls._instance_lock:
+                if not cls._instance:
+                    cls._instance = super(VideoInput, cls).__new__(cls)
+                    # Initialize internal members here in __new__ or __init__
+        return cls._instance
+
     def __init__(self):
+        # Avoid reinitializing on subsequent calls
+        if hasattr(self, '_initialized') and self._initialized:
+            return
+
         self.cap = cv2.VideoCapture(0)
+        if not self.cap.isOpened():
+            print("Camera not available!")
+        else:
+            print("Starting camera")
+
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
         self.cap.set(cv2.CAP_PROP_FPS, FPS)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
+        self._read_lock = threading.Lock()
+        self._initialized = True
+
     def get_frame(self):
-        ret, frame = self.cap.read()
-        if not ret:
-            return None
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        with self._read_lock:
+            ret, frame = self.cap.read()
+            if not ret or frame is None:
+                return None
+            return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
     def close(self):
-        self.cap.release()
+        with self._read_lock:
+            if self.cap.isOpened():
+                self.cap.release()
+
+# class VideoInput:
+#     def __init__(self):
+#         self.cap = cv2.VideoCapture(0)
+#         if not self.cap.isOpened():
+#             print("Camera not available!")
+#         else:
+#             print("starting camera")
+#         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
+#         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
+#         self.cap.set(cv2.CAP_PROP_FPS, FPS)
+#         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+#
+#     def get_frame(self):
+#         ret, frame = self.cap.read()
+#         if not ret:
+#             return None
+#         return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+#
+#     def close(self):
+#         self.cap.release()
 
 # class VideoOutput:
 #     def display_frame(self, frame):
@@ -64,7 +113,7 @@ class VideoDecoder:
         self.decoder.open()
 
     def decode(self, frame):
-        pkt = av.Packet(frame.payload)
+        pkt = av.Packet(frame)
         frames = self.decoder.decode(pkt)
         return frames
 

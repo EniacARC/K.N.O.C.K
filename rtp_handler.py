@@ -3,6 +3,7 @@ import random
 import socket
 import threading
 import time
+from traceback import print_tb
 
 from RTP_msgs import *
 
@@ -32,7 +33,7 @@ class RTPHandler:
 
         self.my_seq = random.randint(0, 50000)
         self.remote_seq = None
-        self.ssrc = ssrc if ssrc else ssrc == random.randint(0, 50000) # identifies src
+        self.ssrc = ssrc if ssrc else random.randint(0, 50000) # identifies src
 
     def start(self):
         if self.running:
@@ -60,6 +61,7 @@ class RTPHandler:
         """Thread function to send RTP packets"""
         """get data in bytes"""
         try:
+            print(self.listen_port)
             # the sequence number is not controlled by the high logic but by transport logic, so it belongs here.
             # if random.randint(1, 100) == 2:
             #     print("dropped")
@@ -72,8 +74,8 @@ class RTPHandler:
             pkts = self._build_packets(data)
             for pkt in pkts:
                 pkt.sequence_number = self.my_seq
-                self.socket.sendto(pkt.build_packet(), (self.send_ip, self.send_port))
                 self.my_seq += 1
+                self.socket.sendto(pkt.build_packet(), (self.send_ip, self.send_port))
         except Exception as e:
             print(f"Error in send loop: {e}")
 
@@ -113,7 +115,7 @@ class RTPHandler:
                                 self.remote_seq = None
                             else:
                                 # Full packet in one go, no fragmentation
-                                self.receive_queue.put(self.recv_payload)
+                                self.receive_queue.put(packet)
                         else:
                             # Intermediate or first fragment
                             if self.recv_payload:
