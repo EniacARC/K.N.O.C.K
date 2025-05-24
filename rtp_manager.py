@@ -82,14 +82,14 @@ class RTPManager(ControllerAware):
         self.recv_video = None
 
     def start_rtp_comms(self):
-        print(f"audio - send:{self.send_audio} recv:{self.recv_audio}")
-        print(f"video - send:{self.send_video} recv:{self.recv_video}")
 
         self.running = True
+        print(str(self))
         if self.send_audio:
             print("send audio")
             self.threads.append(threading.Thread(target=self._send_audio))
-
+        if self.recv_audio:
+            self.threads.append(threading.Thread(target=self._recv_audio))
         if self.send_video:
             self.threads.append(threading.Thread(target=self._send_video))
         if self.recv_video:
@@ -185,5 +185,19 @@ class RTPManager(ControllerAware):
             thread.join()
         self.clear_ports()
 
+    def __str__(self):
+        return (
+            f"RTPManager Status:\n"
+            f"  Running: {self.running}\n"
+            f"  Used Ports: {self.used_ports}\n"
+            f"  Send IP: {self.send_ip}\n"
+            f"  Send Audio Port: {self.send_audio}\n"
+            f"  Send Video Port: {self.send_video}\n"
+            f"  Receive Audio Port: {self.recv_audio}\n"
+            f"  Receive Video Port: {self.recv_video}\n"
+            f"  Audio Queue Size: {self.recv_audio_queue.qsize()}\n"
+            f"  Video Queue Size: {self.recv_video_queue.qsize()}\n"
+            f"  Threads Running: {len(self.threads)}"
+        )
 
 

@@ -8,9 +8,11 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 44100  # Sampling rate in Hz
 
+audio = pyaudio.PyAudio()
+
 class AudioIO(ABC):
     def __init__(self):
-        self.audio = pyaudio.PyAudio()
+        self.audio = audio
         self.stream = None
 
     # @abstractmethod
