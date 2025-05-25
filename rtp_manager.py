@@ -98,7 +98,6 @@ class RTPManager(ControllerAware):
         if self.recv_video:
             self.threads.append(threading.Thread(target=self._recv_video))
 
-        print(len(self.threads))
         for thread in self.threads:
             thread.start()
 
@@ -111,7 +110,6 @@ class RTPManager(ControllerAware):
             # maybe gui should send data to send?
             audio_data = audio_io.read() # is in bytes
             sender.send_packet(audio_data)
-            print(audio_data)
 
         sender.stop()
         audio_io.close()
@@ -123,13 +121,13 @@ class RTPManager(ControllerAware):
         receiver.start()
 
 
-        decoder = AudioOutput()
+        # decoder = AudioOutput()
         while self.running:
             # start rtp_handler -> add payload to recv queue in manager -> use AudioOutput to play in gui
             try:
                 frame = receiver.receive_queue.get(timeout=1).payload
-                # self.recv_audio_queue.put(frame) # no need for decoding
-                decoder.write(frame)
+                self.recv_audio_queue.put(frame) # no need for decoding
+                # decoder.write(frame)
             except Exception:
                 continue
 
@@ -173,7 +171,6 @@ class RTPManager(ControllerAware):
         while self.running:
             # start rtp_handler -> add payload to recv queue in manager -> use AudioOutput to play in gui
             try:
-                print(f"trying to recv on {self.recv_video}")
                 encoded_data = receiver.receive_queue.get(timeout=1).payload
                 decoded_frames = decoder.decode(encoded_data)
                 for frame in decoded_frames:

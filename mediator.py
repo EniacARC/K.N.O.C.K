@@ -62,7 +62,6 @@ class Mediator(MediatorInterface):
 
     def get_next_video_frame(self):
         return self.rtp_manager.get_next_video_frame()  # this is blocking
-
     # define sip_client -> gui
 
     # in get answer it's two different func because it's event based

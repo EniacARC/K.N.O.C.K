@@ -61,7 +61,6 @@ class RTPHandler:
         """Thread function to send RTP packets"""
         """get data in bytes"""
         try:
-            print(self.listen_port)
             # the sequence number is not controlled by the high logic but by transport logic, so it belongs here.
             # if random.randint(1, 100) == 2:
             #     print("dropped")
