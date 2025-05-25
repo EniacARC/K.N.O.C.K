@@ -34,6 +34,9 @@ class MediatorInterface(ABC):
         @abstractmethod
         def get_next_audio_frame(self): pass
 
+        @abstractmethod
+        def get_next_video_frame(self): pass
+
 class ControllerAware:
     def __init__(self):
         self.controller = None

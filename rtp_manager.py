@@ -152,12 +152,11 @@ class RTPManager(ControllerAware):
         sender.start()
         print("starting")
         while self.running:
-            # print(f"running loop to send on {self.send_video}")
             start_time = time.time()
+
             video_frame = video_io.get_frame()
             encoded_frame = encoder.encode(video_frame)
             for frame in encoded_frame:
-                print(f"sent frame to {self.send_video}")
                 sender.send_packet(bytes(frame))
 
             # SEND MAX 30 FPS
@@ -176,11 +175,8 @@ class RTPManager(ControllerAware):
             try:
                 print(f"trying to recv on {self.recv_video}")
                 encoded_data = receiver.receive_queue.get(timeout=1).payload
-                print(f"got data for port {self.recv_video}: {encoded_data}")
                 decoded_frames = decoder.decode(encoded_data)
-                print("decoded data")
                 for frame in decoded_frames:
-                    print("got frame")
                     self.recv_video_queue.put(frame)
                     # img = frame.to_ndarray(format='bgr24')
                     # cv2.imshow('Decoded Frame', img)
