@@ -1,8 +1,7 @@
-import re
 import socket
 import struct
 
-from sip_msgs import *
+from utils.sip_msgs import *
 
 INT_SIZE = 4
 PACK_SIGN = "I"

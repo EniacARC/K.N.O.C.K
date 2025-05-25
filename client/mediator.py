@@ -1,5 +1,5 @@
-from rtp_manager import RTPManager
-from sip_client import SIPHandler
+from client.rtp_logic.rtp_manager import RTPManager
+from client.sip_logic.sip_client import SIPHandler
 from mediator_connect import MediatorInterface
 
 class Mediator(MediatorInterface):

@@ -1,21 +1,13 @@
 import concurrent.futures
-import queue
-import traceback
-from traceback import print_tb
 
-from sip_msgs import *
-from authentication import *
-import socket
+from utils.authentication import *
 import datetime
 import threading
 import time
 from dataclasses import dataclass
-from enum import Enum
-from comms import *
+from utils.comms import *
 import select
-# from sdp_class import *
 from typing import Optional
-from collections import Counter
 
 # Constants
 DEFAULT_SERVER_PORT = 4552

@@ -3,11 +3,11 @@ import threading
 
 import select
 
-from comms import receive_tcp_sip, send_sip_tcp
-from sip_msgs import *
-from authentication import *
-from sdp_class import *
-from mediator_connect import *
+from utils.comms import receive_tcp_sip, send_sip_tcp
+from utils.sip_msgs import *
+from utils.authentication import *
+from utils.sdp_class import *
+from client.mediator_connect import *
 SERVER_IP = '127.0.0.1'
 SERVER_PORT = 4552
 SIP_VERSION = "SIP/2.0"

@@ -2,10 +2,8 @@ import queue
 import random
 import socket
 import threading
-import time
-from traceback import print_tb
 
-from RTP_msgs import *
+from utils.RTP_msgs import *
 
 MAX_PACKET_SIZE = int(1500)
 

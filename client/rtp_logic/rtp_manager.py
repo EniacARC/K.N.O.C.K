@@ -6,11 +6,11 @@ import queue
 
 import cv2
 
-from mediator_connect import *
+from client.mediator_connect import *
 from rtp_handler import RTPHandler
-from audio_capture import AudioInput, AudioOutput
+from audio_capture import AudioInput
 from video_capture import VideoInput, VideoEncoder, VideoDecoder
-from RTP_msgs import RTPPacket
+
 
 class RTPManager(ControllerAware):
     def __init__(self):
