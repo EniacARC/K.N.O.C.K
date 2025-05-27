@@ -67,7 +67,7 @@ class VideoCallFrame(tk.Frame):
         self.video_label.pack(side="top")
 
         self.end_call_btn = tk.Button(self, text="End Call", command=self.end_call)
-        self.end_call_btn.pack(side="top", pady=10)
+        self.end_call_btn.pack(pady=10)
 
         self.running_flag = {"running": True}
 
