@@ -100,7 +100,7 @@ class CallApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Video Call")
-        self.geometry("640x480")
+        self.geometry("700x700")
         self.call_frame = VideoCallFrame(self, video_queue, audio_queue)
         self.call_frame.pack(expand=True, fill="both")
 
