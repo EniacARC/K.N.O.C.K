@@ -4,7 +4,7 @@ class MakeCallController(BaseController):
     def __init__(self, view, app_controller, model):
         self.view = view  # make call view
         self.app = app_controller
-        self.model = model  # user model
+        self.model = model  # call model
         # may need to add a model to tell who are we dialing(?)
         self.bind()
 

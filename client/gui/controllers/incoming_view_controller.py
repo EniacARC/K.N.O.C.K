@@ -1,9 +1,10 @@
 from .base_controller import BaseController
-class DialingController(BaseController):
+
+class IncomingCallController(BaseController):
     def __init__(self, view, app_controller, model):
         self.view = view # dialing view
         self.app = app_controller
-        self.model = model # user model
+        self.model = model # call model
         # may need to add a model to tell who are we dialing(?)
         self.bind()
 
