@@ -128,7 +128,7 @@ class SIPHandler(ControllerAware):
                     if sdp_recv.video_port:
                         self.controller.set_send_video(sdp_recv.video_port)
 
-                    self.controller.set_recv_ports(video=False, audio=True)
+                    self.controller.set_recv_ports(video=True, audio=True)
 
                     local_sdp = SDP(0, '127.0.0.1', sdp_recv.session_id,
                            video_port=self.controller.get_recv_video_port(), video_format='h.264', # maybe not(?)
@@ -305,7 +305,7 @@ class SIPHandler(ControllerAware):
         call_id = generate_random_call_id()
         session_id = SDP.generate_session_id()
 
-        self.controller.set_recv_ports(video=False, audio=True) # will change to add gui events
+        self.controller.set_recv_ports(video=True, audio=True) # will change to add gui events
         sdp_body = SDP(0, '127.0.0.1', session_id,
                        video_port=self.controller.get_recv_video_port(), video_format='h.264', # maybe not(?)
                        audio_port=self.controller.get_recv_audio_port(), audio_format='acc' # not the real format

@@ -125,8 +125,8 @@ class RTPManager(ControllerAware):
         while self.running:
             # start rtp_handler -> add payload to recv queue in manager -> use AudioOutput to play in gui
             try:
-                frame = receiver.receive_queue.get(timeout=1).payload
-                self.recv_audio_queue.put(frame) # no need for decoding
+                frame = receiver.receive_queue.get(timeout=1)
+                self.recv_audio_queue.put((frame.timestamp, frame.payload)) # no need for decoding
                 # decoder.write(frame)
             except Exception:
                 continue
@@ -171,10 +171,10 @@ class RTPManager(ControllerAware):
         while self.running:
             # start rtp_handler -> add payload to recv queue in manager -> use AudioOutput to play in gui
             try:
-                encoded_data = receiver.receive_queue.get(timeout=1).payload
-                decoded_frames = decoder.decode(encoded_data)
+                encoded_data = receiver.receive_queue.get(timeout=1)
+                decoded_frames = decoder.decode(encoded_data.payload)
                 for frame in decoded_frames:
-                    self.recv_video_queue.put(frame)
+                    self.recv_video_queue.put((encoded_data.timestamp, frame))
                     # img = frame.to_ndarray(format='bgr24')
                     # cv2.imshow('Decoded Frame', img)
                     # if cv2.waitKey(1) & 0xFF == ord('q'):

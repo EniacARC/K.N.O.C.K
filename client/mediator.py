@@ -68,3 +68,5 @@ class Mediator(MediatorInterface):
     # def answer_call(self, msg):
     #     answer = self.gui.answer_call()
     #     self.sip_client.answer_call(msg, answer)
+
+

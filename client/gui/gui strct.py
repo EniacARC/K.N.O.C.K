@@ -65,6 +65,8 @@ class BaseView(tk.Frame):
     def on_show(self, **kwargs):
         pass
 
+    def on_hide(self, **kwargs):
+        pass
 
 class LoginView(BaseView):
     def __init__(self, master):
@@ -144,10 +146,6 @@ class VideoCallView(BaseView):
         self.mute_btn.pack(side="left", padx=5)
         self.end_call_btn = tk.Button(self, text="End Call")
         self.end_call_btn.pack(side="left", padx=5)
-
-    def on_show(self, **kwargs):
-        pass
-
 
 # === Controllers ===
 
@@ -441,3 +439,5 @@ if __name__ == "__main__":
 # |                                |
 # | [Mute Button]        [End Call]|
 # +--------------------------------+
+
+# https://nazmul-ahsan.medium.com/how-to-organize-multi-frame-tkinter-application-with-mvc-pattern-79247efbb02b
