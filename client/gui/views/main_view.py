@@ -1,10 +1,10 @@
-from root import Root
-from login_view import LoginView
-from signup_view import SignupView
-from call_view import VideoCallView
-from make_call_view import MakeCallView
-from incoming_view import IncomingCallView
-from dial_view import DialingView
+from .root import Root
+from .login_view import LoginView
+from .signup_view import SignupView
+from .call_view import VideoCallView
+from .make_call_view import MakeCallView
+from .incoming_view import IncomingCallView
+from .dial_view import DialingView
 class View:
     def __init__(self):
         self.root = Root()
