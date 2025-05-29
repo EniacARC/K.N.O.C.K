@@ -540,10 +540,14 @@ class SIPServer:
             call.last_used_cseq_num = cseq
             call.last_active = datetime.datetime.now()
 
+        print(f"for {uri} checking prev")
+
         with self.reg_lock:
             need_auth = True
-            if self.registered_user.get_by_key(sock):
-                if self.registered_user.get_by_val(uri).socket == sock:
+            if self.registered_user.get_by_key(sock): # user has registered in the connection
+                print("1")
+                if self.registered_user.get_by_key(sock).uri == uri: # the registration was for the same uri
+                    print("2")
                     # this is the same user in the same connection that was already authenticated
                     with self.reg_lock:
                         user = RegisteredUser(
@@ -553,17 +557,23 @@ class SIPServer:
                             registration_time=datetime.datetime.now(),
                             expires=expires,
                         )
+                        print(user)
                         self.registered_user.add(user)  # overrides previous register if exists
+                        print("registered")
                         self._send_to_client(sock, SIPMsgFactory.create_response_from_request(req, SIPStatusCode.OK,
                                                                                               SERVER_URI))
+                        print("sent to client")
 
                     need_auth = False
+                    print("sent error")
 
-            elif self.registered_user.get_by_val(uri):
+            if self.registered_user.get_by_val(uri): # if the tries to register to a uri that is logged in but isn't him
                 # someone is registered to the uri already
                 error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.FORBIDDEN, SERVER_URI)
                 self._send_to_client(sock, str(error_msg).encode())
                 need_auth = False
+
+            print(f"neede auth for {uri} - {need_auth}")
 
             if not need_auth:
                 del self.active_calls[call_id]
@@ -571,6 +581,7 @@ class SIPServer:
 
 
         auth_header = req.get_header('www-authenticate')
+        print(f"got auth header - {bool(auth_header)}")
         if auth_header:
             with self.call_lock:
                 if call_id not in self.pending_auth:
@@ -595,8 +606,13 @@ class SIPServer:
                         # user authenticated
                         del self.pending_auth[call_id]
                         del self.active_calls[call_id]
+
                         print("user authenticated")
                         with self.reg_lock:
+                            # if user has previous registration delete it
+                            if self.registered_user.get_by_key(sock):
+                                print(f"removing prev reg: {self.registered_user.get_by_key(sock)}")
+                                self.registered_user.remove_by_key(sock)
                             user = RegisteredUser(
                                 uri=uri,
                                 address=sock.getpeername(),
