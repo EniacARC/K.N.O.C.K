@@ -10,7 +10,7 @@ class SignInController(BaseController):
         # may need to add a model to tell who are we dialing(?)
 
     def bind(self):
-        self.view.login_btn.config(command=self.on_sign_in())
+        self.view.login_btn.config(command=self.on_sign_in)
         self.view.goto_signup_btn.config(command=self.on_goto_signup)
 
     def on_show(self, view):

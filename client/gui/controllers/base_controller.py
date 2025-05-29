@@ -3,8 +3,11 @@
 
 from abc import ABC, abstractmethod
 class BaseController(ABC):
-    def on_destroy(self): pass
+    def __init__(self, app_controller, view, model):
+        self.view = view
+        self.app = app_controller
+        self.model = model
 
     def bind(self): pass
 
-    def on_show(self, view): pass
+    def on_destroy(self): pass
