@@ -324,7 +324,7 @@ class SIPHandler(ControllerAware):
         self.current_call_id = None
         self.call_type = None
         self.call_state = None
-        self.controller.clear_rtp_ports()
+        # self.controller.clear_rtp_ports()
 
 
 

@@ -6,16 +6,13 @@ class SignupView(tk.Frame):
         tk.Label(self, text="Username:").pack()
         self.username_entry = tk.Entry(self)
         self.username_entry.pack()
-        tk.Label(self, text="Email:").pack()
-        self.email_entry = tk.Entry(self)
-        self.email_entry.pack()
         tk.Label(self, text="Password:").pack()
         self.password_entry = tk.Entry(self, show="*")
         self.password_entry.pack()
         self.signup_btn = tk.Button(self, text="Signup")
         self.signup_btn.pack(pady=5)
-        self.goto_login_btn = tk.Button(self, text="Go to Login Screen")
-        self.goto_login_btn.pack()
+        self.login_btn = tk.Button(self, text="Go to Login Screen")
+        self.login_btn.pack()
 
 # +--------------------------------+
 # |           Signup               |

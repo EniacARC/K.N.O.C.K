@@ -36,6 +36,7 @@ def send_sip_tcp(sock, data):
         sent = 0
         while sent < len(data):
             sent += sock.send(data[sent:])
+        print("sent all")
         return True
     except socket.error as err:
         print(f"error while sending at: {err}")

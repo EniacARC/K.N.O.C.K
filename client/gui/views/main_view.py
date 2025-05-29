@@ -5,6 +5,7 @@ from .call_view import VideoCallView
 from .make_call_view import MakeCallView
 from .incoming_view import IncomingCallView
 from .dial_view import DialingView
+from .error_view import ErrorView
 class View:
     def __init__(self):
         self.root = Root()
@@ -16,7 +17,8 @@ class View:
             "make call": MakeCallView,
             "incoming call": IncomingCallView,
             "dialing": DialingView,
-            "video": VideoCallView
+            "video": VideoCallView,
+            "error": ErrorView
         }
 
         self.current_view = None

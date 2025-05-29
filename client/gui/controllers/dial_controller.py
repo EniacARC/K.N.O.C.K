@@ -37,11 +37,10 @@ from .base_controller import BaseController
 #             self.animation_id = None
 
 class DialingController(BaseController):
-    def __init__(self, view, app_controller):
-        self.view = view # dialing view
+    def __init__(self, app_controller):
+        self.view = None # dialing view
         self.app = app_controller
         # may need to add a model to tell who are we dialing(?)
-        self.bind()
 
         self.dots_cycle = itertools.cycle([".", "..", "..."])
         self.animate_start = False
@@ -50,7 +49,10 @@ class DialingController(BaseController):
     def bind(self):
         self.view.cancel_btn.config(command=self.on_cancel)
 
-    def on_show(self):
+    def on_show(self, view):
+        self.view = view
+        self.bind()
+
         self.animate_start = True
         self.animate()
         # username = kwargs.get("username", "Unknown")
