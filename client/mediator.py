@@ -51,17 +51,25 @@ class Mediator(MediatorInterface):
             raise RuntimeError("RTP manager not registered")
         self.rtp_manager.clear_ports()
 
+    # set sip -> all
     def start_stream(self):
         self.rtp_manager.start_rtp_comms()
+        print("started rtp")
+        self.gui.switch_mediator('video')
     def stop_rtp_stream(self):
         self.rtp_manager.stop()
+        self.gui.switch_mediator('make call')
 
     # define gui -> rtp_manager
     def get_next_audio_frame(self):
-        return self.rtp_manager.get_next_audio_frame() # this is blocking
+        return self.rtp_manager.get_next_audio_frame()
 
     def get_next_video_frame(self):
-        return self.rtp_manager.get_next_video_frame()  # this is blocking
+        return self.rtp_manager.get_next_video_frame()
+
+    # defin gui -> rtp_manager
+
+
     # define sip_client -> gui
 
     # in get answer it's two different func because it's event based

@@ -2,21 +2,20 @@ import tkinter
 
 from .base_controller import BaseController
 import tkinter as tk
-class SignInController(BaseController):
-    def __init__(self, app_controller, model):
-        self.view = None # dialing view
-        self.app = app_controller
-        self.model = model # user model
+class LoginController(BaseController):
+    def __init__(self, app_controller, view, model):
+        super().__init__(app_controller, view, model)
+        self.model = self.app_model.user # user model
         # may need to add a model to tell who are we dialing(?)
+
+        self.bind()
+        self.fill_info()
 
     def bind(self):
         self.view.login_btn.config(command=self.on_sign_in)
         self.view.goto_signup_btn.config(command=self.on_goto_signup)
 
-    def on_show(self, view):
-        self.view = view
-        self.bind()
-
+    def fill_info(self):
         if self.model.username is not None:
             self.view.username_entry.insert(tk.END, self.model.username)
         if self.model.password is not None:
@@ -39,5 +38,4 @@ class SignInController(BaseController):
             self.app.show_screen("make call")
         else:
             # Show error with return screen "signin"
-            self.app.display_error("error login msg", "signin") # sets the controller msg and return func then displays
-            # self.app.show_screen("error", message=error_msg, return_to="signup")
+            self.app.display_error("error login msg", "login") # sets the controller msg and return func then displays

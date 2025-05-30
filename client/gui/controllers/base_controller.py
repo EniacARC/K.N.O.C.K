@@ -6,7 +6,7 @@ class BaseController(ABC):
     def __init__(self, app_controller, view, model):
         self.view = view
         self.app = app_controller
-        self.model = model
+        self.app_model = model
 
     def bind(self): pass
 

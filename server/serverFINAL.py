@@ -267,7 +267,7 @@ class SIPServer:
                     else:
                         # returns sip msg object and checks is in format and in valid bounds
                         msg = receive_tcp_sip(sock, MAX_PASSES_META, MAX_PASSES_BODY)
-                        print(msg)
+                        print(f" got msg: {msg}")
                         if msg:
                             self.thread_pool.submit(self._worker_process_msg, sock, msg)
                         else:
@@ -545,9 +545,7 @@ class SIPServer:
         with self.reg_lock:
             need_auth = True
             if self.registered_user.get_by_key(sock): # user has registered in the connection
-                print("1")
                 if self.registered_user.get_by_key(sock).uri == uri: # the registration was for the same uri
-                    print("2")
                     # this is the same user in the same connection that was already authenticated
                     with self.reg_lock:
                         user = RegisteredUser(
@@ -562,10 +560,8 @@ class SIPServer:
                         print("registered")
                         self._send_to_client(sock, SIPMsgFactory.create_response_from_request(req, SIPStatusCode.OK,
                                                                                               SERVER_URI))
-                        print("sent to client")
 
                     need_auth = False
-                    print("sent error")
 
             if self.registered_user.get_by_val(uri): # if the tries to register to a uri that is logged in but isn't him
                 # someone is registered to the uri already
