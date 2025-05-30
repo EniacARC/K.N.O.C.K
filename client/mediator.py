@@ -55,10 +55,10 @@ class Mediator(MediatorInterface):
     def start_stream(self):
         self.rtp_manager.start_rtp_comms()
         print("started rtp")
-        self.gui.switch_mediator('video')
+        self.gui.switch_screen_mediator('video')
     def stop_rtp_stream(self):
         self.rtp_manager.stop()
-        self.gui.switch_mediator('make call')
+        self.gui.switch_screen_mediator('make call')
 
     # define gui -> rtp_manager
     def get_next_audio_frame(self):

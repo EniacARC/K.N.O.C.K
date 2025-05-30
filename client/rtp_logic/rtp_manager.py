@@ -134,9 +134,9 @@ class RTPManager(ControllerAware):
         receiver.stop()
 
     def get_next_audio_frame(self):
-        try:
-            return self.recv_audio_queue.get(timeout=0.1) # blocking
-        except Exception:
+        if not self.recv_audio_queue.empty():
+            return self.recv_audio_queue.get() # blocking
+        else:
             return None
 
     def _send_video(self):
@@ -188,9 +188,9 @@ class RTPManager(ControllerAware):
 
         receiver.stop()
     def get_next_video_frame(self):
-        try:
-            return self.recv_video_queue.get(timeout=0.1)  # blocking
-        except Exception:
+        if not self.recv_video_queue.empty():
+            return self.recv_video_queue.get()  # blocking
+        else:
             return None
 
     def stop(self):
