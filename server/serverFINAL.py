@@ -457,6 +457,7 @@ class SIPServer:
                     call.uri_other = self.registered_user.get_by_key(sock).uri  # set the other uri in the call
 
             if not is_auth:
+                print("authing")
                 auth_header = req.get_header('www-authenticate')
                 if auth_header:
                     if call_id not in self.pending_auth.keys():
@@ -480,6 +481,13 @@ class SIPServer:
                                                                                    SERVER_URI)
                             self._send_to_client(sock, str(error_msg).encode())
                             return
+                else:
+                    # if not authenticated
+                    self._create_auth_challenge(sock, req)
+
+
+
+            print("authd")
 
 
             # now we know the user is authenticated we can proceed to send the invite
