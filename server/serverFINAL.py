@@ -492,7 +492,7 @@ class SIPServer:
 
             # now we know the user is authenticated we can proceed to send the invite
             if call_id in self.pending_auth:
-                del self.pending_auth
+                del self.pending_auth[call_id]
 
             call.call_state = SIPCallState.TRYING
             if not req.body:
