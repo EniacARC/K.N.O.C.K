@@ -151,6 +151,12 @@ class SIPHandler(ControllerAware):
             self.clear_call()
         else:
             print("The call has changed it's state")
+
+    def process_bye(self, msg):
+        res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK)
+        send_sip_tcp(self.socket, str(res).encode())
+        # send stop stream event to mediator
+        self.clear_call()
     def process_invite(self, msg):
         # Accept call
         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.RINGING, self.uri)

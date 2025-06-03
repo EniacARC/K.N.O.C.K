@@ -31,6 +31,8 @@ class SIPCallState(Enum):
     INIT_CANCEL = "INIT CANCEL"
     TRYING_CANCEL = "TRYING CANCEL"
 
+    WAITING_BYE = "WAITING BYE"
+
 
 class SIPCallType(Enum):
     REGISTER = 'REGISTER'
