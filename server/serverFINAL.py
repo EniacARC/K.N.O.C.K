@@ -1,4 +1,5 @@
 import concurrent.futures
+from collections import defaultdict
 
 from utils.authentication import *
 import datetime
@@ -192,6 +193,17 @@ class SIPServer:
         self.connected_users = []  # sockets
         self.pending_keep_alive = {}  # call-id -> KeepAlive
 
+        # for ip block (dos stop)
+        self.blacklist_ips = set()
+        self.ip_connection_counts = defaultdict(list)  # IP -> [timestamps]
+        self.connection_threshold = 50  # max attempts
+        self.time_window = 60  # seconds
+
+        # msg rate limiter for ddos
+        self.ip_message_counts = defaultdict(list)  # IP -> [timestamps]
+        self.msg_rate_limit = 100  # max allowed messages
+        self.msg_time_window = 60  # seconds
+
     def start(self):
         """
         Start the SIP server, bind the socket, listen for connections,
@@ -218,12 +230,40 @@ class SIPServer:
                     if sock is self.server_socket:
                         # Incoming connection
                         client_sock, addr = self.server_socket.accept()
-                        # Check if IP blacklisted
-                        # Add addr to table. If too many entries in a short amount of time then DOS block IP.
+                        client_ip = addr[0]
+                        if client_ip in self.blacklist_ips:
+                            client_sock.close()
+                            continue
+                        # sliding window
+                        now = time.time()
+                        self.ip_connection_counts[client_ip] = [
+                            t for t in self.ip_connection_counts[client_ip] if now - t < self.time_window
+                        ]
+                        self.ip_connection_counts[client_ip].append(now)
+
+                        if len(self.ip_connection_counts[client_ip]) > self.connection_threshold:
+                            print(f"Blacklisting IP {client_ip} for excessive connections.")
+                            self.blacklist_ips.add(client_ip)
+                            client_sock.close()
+                            continue
+
                         with self.conn_lock:
                             self.connected_users.append(client_sock)
                         print(f"added client at {addr}")
                     else:
+                        # Rate-limit messages per connection
+                        now = time.time()
+                        self.ip_message_counts[sock] = [
+                            t for t in self.ip_message_counts[sock] if now - t < self.msg_time_window
+                        ]
+                        self.ip_message_counts[sock].append(now)
+
+                        # if too many msgs close connection
+                        if len(self.ip_message_counts[sock]) > self.msg_rate_limit:
+                            print(f"Too many messages from {sock}, closing connection.")
+                            self._close_connection(sock)
+                            continue
+
                         # returns sip msg object and checks is in format and in valid bounds
                         msg = receive_tcp_sip(sock, MAX_PASSES_META, MAX_PASSES_BODY)
                         print(f" got msg: {msg}")
@@ -231,7 +271,7 @@ class SIPServer:
                             self.thread_pool.submit(self._worker_process_msg, sock, msg)
                         else:
                             self._close_connection(sock)
-        except socket.error as err:
+        except Exception as err:
             print(str(err) + "something went wrong!")
         finally:
             self.thread_pool.shutdown(wait=True)
