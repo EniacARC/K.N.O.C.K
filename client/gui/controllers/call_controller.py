@@ -3,7 +3,7 @@ import time
 import cv2
 from PIL import Image, ImageTk
 
-from audio_capture import AudioOutput
+from client.rtp_logic.audio_capture import AudioOutput
 from .base_controller import BaseController
 import threading
 
@@ -38,15 +38,22 @@ class CallController(BaseController):
 
     def data_loop(self):
         while self.running:
-            video_frame = self.app.mediator.get_next_video_frame()
-            audio_frame = self.app.mediator.get_next_audio_frame()
-            if audio_frame:
-                self.temp_play_audio(audio_frame[1])
-            if video_frame:
-                self.temp_play_video(video_frame[1])
+            frame = self.app.mediator.get_next_audio_frame()
+            if frame:
+                audio_data = frame[1]
 
-            # time.sleep(0.05)
+                # Write to audio output stream
+                self.temp_play_audio(audio_data)
+            frame = self.app.mediator.get_next_video_frame()
+            if frame:
+                video_data = frame[1]
+                # cv2.imshow('camera', video_data)
+                # if cv2.waitKey(1) & 0xFF == ord('q'):
+                #     break
+                self.temp_play_video(video_data)
 
+            else:
+                time.sleep(0.01)  # Avoid busy waiting
 
         print("stopped")
 
@@ -65,9 +72,8 @@ class CallController(BaseController):
         print("ended")
 
     def temp_play_video(self, frame):
-        img_cv2 = frame.to_ndarray(format='bgr24')
         # Convert frame to PIL Image and then to ImageTk.PhotoImage
-        img = Image.fromarray(cv2.cvtColor(img_cv2, cv2.COLOR_BGR2RGB))
+        img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         # Resize image exactly to 640x480 to keep resolution consistent (optional)
         img = img.resize((640, 480), Image.Resampling.LANCZOS)
         imgtk = ImageTk.PhotoImage(image=img)

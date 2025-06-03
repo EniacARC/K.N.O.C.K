@@ -1,6 +1,6 @@
 from client.rtp_logic.rtp_manager import RTPManager
 from client.sip_logic.sip_client import SIPHandler
-from mediator_connect import MediatorInterface
+from .mediator_connect import MediatorInterface
 
 class Mediator(MediatorInterface):
     def __init__(self):
