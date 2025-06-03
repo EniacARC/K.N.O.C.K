@@ -2,6 +2,7 @@ import concurrent.futures
 from collections import defaultdict
 
 from utils.authentication import *
+from utils.user_database import UserDatabase
 import datetime
 import threading
 import time
@@ -23,6 +24,8 @@ KEEP_ALIVE_MSG = SIPMsgFactory.create_request(SIPMethod.OPTIONS, SIP_VERSION, "k
                                               "", "1")
 MAX_PASSES_META = 8000  # 8 kb
 MAX_PASSES_BODY = 1000
+
+BANNED_IPS_FILE = "banned_ips.txt"
 
 
 @dataclass
@@ -175,10 +178,14 @@ class SIPServer:
             thread_name_prefix="sip_worker"
         )
 
+        self.user_db = UserDatabase()
+        self.authority = AuthService(SERVER_URI)
+
         # Locks - RLock for multiple acquisitions in the same thread
         self.reg_lock = threading.RLock()  # Lock for adding users to the registered_users dict
         self.call_lock = threading.RLock()  # Lock for adding users to the active_calls dict
         self.conn_lock = threading.RLock()
+        self.ip_lock = threading.RLock()
 
         # User management properties
         self.registered_user = BiMap(key_attr="socket", value_attr="uri")
@@ -187,20 +194,22 @@ class SIPServer:
         self.active_calls = {}  # call lock. call-id -> Call
         # no use for bi map here. there can be a socket in multiple calls still O(n)
         self.pending_auth = {}  # uri -> AuthChallenge
-        self.authority = AuthService(SERVER_URI)
 
         # Connection management - con lock
         self.connected_users = []  # sockets
         self.pending_keep_alive = {}  # call-id -> KeepAlive
 
+        # ip lock
+        self.ip_connection_counts = defaultdict(list)  # IP -> [timestamps]
+        self.ip_message_counts = defaultdict(list)  # sock -> [timestamps]
+
         # for ip block (dos stop)
         self.blacklist_ips = set()
-        self.ip_connection_counts = defaultdict(list)  # IP -> [timestamps]
         self.connection_threshold = 50  # max attempts
         self.time_window = 60  # seconds
+        self.max_connected = 1000
 
         # msg rate limiter for ddos
-        self.ip_message_counts = defaultdict(list)  # IP -> [timestamps]
         self.msg_rate_limit = 100  # max allowed messages
         self.msg_time_window = 60  # seconds
 
@@ -219,8 +228,14 @@ class SIPServer:
             # Clean any expired registrations or inactive users
             cleanup_thread = threading.Thread(target=self._cleanup_expired_reg, daemon=True)
             keepalive_thread = threading.Thread(target=self._keep_alive, daemon=True)
+            inactive_call_clean_thread = threading.Thread(target=self._cleanup_inactive_calls, daemon=True)
+            ip_cleanup_thread = threading.Thread(target=self._cleanup_ip_counters, daemon=True)
             cleanup_thread.start()
             keepalive_thread.start()
+            inactive_call_clean_thread.start()
+            ip_cleanup_thread.start()
+
+            self._load_banned_ips()
 
             # Start server loop
             while self.running:
@@ -231,38 +246,43 @@ class SIPServer:
                         # Incoming connection
                         client_sock, addr = self.server_socket.accept()
                         client_ip = addr[0]
-                        if client_ip in self.blacklist_ips:
+                        if client_ip in self.blacklist_ips or len(self.connected_users) >= self.max_connected:
                             client_sock.close()
                             continue
                         # sliding window
-                        now = time.time()
-                        self.ip_connection_counts[client_ip] = [
-                            t for t in self.ip_connection_counts[client_ip] if now - t < self.time_window
-                        ]
-                        self.ip_connection_counts[client_ip].append(now)
+                        with self.ip_lock:
+                            now = time.time()
+                            self.ip_connection_counts[client_ip] = [
+                                t for t in self.ip_connection_counts[client_ip] if now - t < self.time_window
+                            ]
+                            self.ip_connection_counts[client_ip].append(now)
 
-                        if len(self.ip_connection_counts[client_ip]) > self.connection_threshold:
-                            print(f"Blacklisting IP {client_ip} for excessive connections.")
-                            self.blacklist_ips.add(client_ip)
-                            client_sock.close()
-                            continue
+                            if len(self.ip_connection_counts[client_ip]) > self.connection_threshold:
+                                print(f"Blacklisting IP {client_ip} for excessive connections.")
+                                self.blacklist_ips.add(client_ip)
+                                del self.ip_connection_counts[client_ip]
+                                client_sock.close()
+                                continue
 
                         with self.conn_lock:
+                            # add encryption
                             self.connected_users.append(client_sock)
                         print(f"added client at {addr}")
                     else:
                         # Rate-limit messages per connection
-                        now = time.time()
-                        self.ip_message_counts[sock] = [
-                            t for t in self.ip_message_counts[sock] if now - t < self.msg_time_window
-                        ]
-                        self.ip_message_counts[sock].append(now)
+                        with self.ip_lock:
+                            now = time.time()
+                            self.ip_message_counts[sock] = [
+                                t for t in self.ip_message_counts[sock] if now - t < self.msg_time_window
+                            ]
+                            self.ip_message_counts[sock].append(now)
 
-                        # if too many msgs close connection
-                        if len(self.ip_message_counts[sock]) > self.msg_rate_limit:
-                            print(f"Too many messages from {sock}, closing connection.")
-                            self._close_connection(sock)
-                            continue
+                            # if too many msgs close connection
+                            if len(self.ip_message_counts[sock]) > self.msg_rate_limit:
+                                print(f"Too many messages from {sock}, closing connection.")
+                                del self.ip_message_counts[sock]
+                                self._close_connection(sock)
+                                continue
 
                         # returns sip msg object and checks is in format and in valid bounds
                         msg = receive_tcp_sip(sock, MAX_PASSES_META, MAX_PASSES_BODY)
@@ -280,6 +300,36 @@ class SIPServer:
                 while self.connected_users:
                     self.connected_users.pop().close()
             self.server_socket.close()
+
+    def _load_banned_ips(self):
+        """
+        Load previously banned IP addresses from the banned IPs file.
+
+        This method reads each line from the BANNED_IPS_FILE and adds valid IP
+        addresses to the self.blacklist_ips set. If the file does not exist,
+        it starts with an empty blacklist and logs that information.
+        """
+        try:
+            with open(BANNED_IPS_FILE, "r") as f:
+                for line in f:
+                    ip = line.strip()
+                    if ip:
+                        self.blacklist_ips.add(ip)
+            print(f"Loaded {len(self.blacklist_ips)} banned IPs.")
+        except FileNotFoundError:
+            print("No banned IP file found. Starting fresh.")
+
+    def _save_banned_ip(self):
+        """
+        Save the current set of blacklisted IP addresses to the banned IPs file.
+
+        This method writes all IP addresses in the self.blacklist_ips set to
+        the BANNED_IPS_FILE, one per line. It overwrites any existing entries
+        with the current set of known banned IPs.
+        """
+        with open(BANNED_IPS_FILE, "a") as f:
+            for ip in self.blacklist_ips:
+                f.write(ip + "\n")
 
     def _worker_process_msg(self, sock, msg):
         """
@@ -346,7 +396,7 @@ class SIPServer:
                 msg.set_header(header, "missing")
         if msg.get_header('cseq')[1] != msg.method:
             status = SIPStatusCode.BAD_REQUEST
-            msg.set_header('cseq', [msg.get_header['cseq'][0], msg.method.lower()])
+            msg.set_header('cseq', [msg.get_header('cseq')[0], msg.method.lower()])
         # elif len(msg.body) != msg.get_header('content-length'):
         #     error_msg.status_code = SIPStatusCode.BAD_REQUEST
 
@@ -381,6 +431,7 @@ class SIPServer:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
                     return
+                call.last_active = datetime.datetime.now()
 
             # call valid - foward request
             send_sock = call.caller_socket if call.caller_socket == sock else call.callee_socket
@@ -413,6 +464,7 @@ class SIPServer:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
                     return
+                call.last_active = datetime.datetime.now()
 
                 print("hello")
                 print(call.call_state)
@@ -454,6 +506,7 @@ class SIPServer:
                     self._send_to_client(sock, str(error_msg).encode())
                     return
                     # the call is in the correct state and can be canceled
+                call.last_active = datetime.datetime.now()
 
             call.last_used_cseq_num = cseq
             call.last_active = datetime.datetime.now()
@@ -462,7 +515,7 @@ class SIPServer:
             self._send_to_client(sock, str(res_msg).encode())
 
             # send cancel to the other side
-            req.set_header('cseq', cseq + 1, req.get_header('cseq')[1])
+            req.set_header('cseq', (cseq + 1, req.get_header('cseq')[1]))
             req.set_header('from', SERVER_URI)
             if call.uri_other is not None:
                 # other uri in invite is always the
@@ -489,6 +542,13 @@ class SIPServer:
         uri_recv = req.get_header('to')
         call_id = req.get_header("call-id")
         cseq = req.get_header('cseq')[0]
+
+        if not self.user_db.user_exists(uri_sender):
+            # register is to the server only
+            error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_FOUND, SERVER_URI)
+            self._send_to_client(sock, str(error_msg).encode())
+            return
+
         with self.call_lock:  # it's better to get the lock for the whole func instead of acquiring multiple times
             # verify call details are the ok
             call = None
@@ -544,7 +604,9 @@ class SIPServer:
                                                                                SERVER_URI)
                         self._send_to_client(sock, str(error_msg).encode())
                     else:
-                        answer_now = self.authority.calculate_hash_auth(auth_header_parsed['username'],
+                        password = self.user_db.get_password(uri_sender)
+                        answer_now = self.authority.calculate_hash_auth(
+                                                                        password,
                                                                         SIPMethod.REGISTER,
                                                                         auth_header_parsed['nonce'],
                                                                         auth_header_parsed['realm'])
@@ -596,6 +658,12 @@ class SIPServer:
         if to_uri != SERVER_URI:
             # register is to the server only
             error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_GATEWAY, SERVER_URI)
+            self._send_to_client(sock, str(error_msg).encode())
+            return
+
+        if not self.user_db.user_exists(uri):
+            # register is to the server only
+            error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_FOUND, SERVER_URI)
             self._send_to_client(sock, str(error_msg).encode())
             return
 
@@ -677,10 +745,13 @@ class SIPServer:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
                 else:
-                    answer_now = self.authority.calculate_hash_auth(auth_header_parsed['username'],
+                    password = self.user_db.get_password(uri)
+                    answer_now = self.authority.calculate_hash_auth(
+                                                                    password,
                                                                     SIPMethod.REGISTER.value,
                                                                     auth_header_parsed['nonce'],
                                                                     auth_header_parsed['realm'])
+                    # answer now based on the vars he sent
 
                     if answer_now != auth_header_parsed['response'] or answer_now != self.pending_auth[call_id].answer:
                         error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.FORBIDDEN, SERVER_URI)
@@ -749,13 +820,12 @@ class SIPServer:
     def _create_auth_challenge(self, sock, request):
         """
         Send an authentication challenge to the client.
-
         :param sock: Socket to send the challenge to
         :type sock: socket.socket
         :param request: Original SIP request needing authentication
         :type request: SIPRequest
         """
-        """Send authentication challenge for REGISTER request"""
+        # we assume the function that called us verified the user exists otherwise we store None
         method = request.method
         call_id = request.get_header('call-id')
         uri = request.get_header('from')
@@ -764,9 +834,10 @@ class SIPServer:
         with self.call_lock:
             # Generate nonce
             nonce = AuthService.generate_nonce().lower()
+            password = self.user_db.get_password(uri)
             # Create challenge
             challenge = AuthChallenge(
-                answer=self.authority.calculate_hash_auth(uri, method, nonce, SERVER_URI),
+                answer=self.authority.calculate_hash_auth(password, method, nonce, SERVER_URI),
                 created_time=datetime.datetime.now()
             )
             self.pending_auth[call_id] = challenge
@@ -909,44 +980,63 @@ class SIPServer:
         return error_msg
 
     def _cleanup_expired_reg(self):
-        """Removes registrations that are past expiration"""
-        with self.reg_lock:
-            for uri, user in self.registered_user.val_to_obj:
-                if (datetime.datetime.now() - user.registration_time) >= user.expires:
-                    self.registered_user.remove_by_val(uri)
-        time.sleep(30)
+        while self.running:
+            """Removes registrations that are past expiration"""
+            with self.reg_lock:
+                for uri, user in self.registered_user.val_to_obj:
+                    if (datetime.datetime.now() - user.registration_time) >= user.expires:
+                        self.registered_user.remove_by_val(uri)
+            time.sleep(30)
 
     def _cleanup_inactive_calls(self):
-        """Removes calls with sockets that are inactive"""
-        with self.call_lock:
-            for call_id, call in self.active_calls:
-                if (
-                        datetime.datetime.now() - call.last_active) >= CALL_IDLE_LIMIT and call.call_type != SIPCallState.IN_CALL:
+        while self.running:
+            """Removes calls with sockets that are inactive"""
+            with self.call_lock:
+                for call_id, call in self.active_calls:
+                    if (
+                            datetime.datetime.now() - call.last_active) >= CALL_IDLE_LIMIT and call.call_type != SIPCallState.IN_CALL:
 
-                    # send to the clients that the call was terminated if active
-                    end_msg = SIPMsgFactory.create_response(SIPStatusCode.DOES_NOT_EXIST_ANYWHERE, SIP_VERSION,
-                                                            SIPMethod.OPTIONS,
-                                                            SIPMethod.INVITE, 'none', SERVER_URI, call.call_id)
-                    send_sock = call.caller_socket
-                    if self.registered_user.get_by_key(send_sock):
-                        end_msg.set_header('to', self.registered_user.get_by_key(send_sock))
-                    self._send_to_client(send_sock, str(end_msg).encode())
-                    del self.active_calls[call_id]
-
-                    send_sock = call.callee_socket
-                    if send_sock != self.server_socket:
+                        # send to the clients that the call was terminated if active
+                        end_msg = SIPMsgFactory.create_response(SIPStatusCode.DOES_NOT_EXIST_ANYWHERE, SIP_VERSION,
+                                                                SIPMethod.OPTIONS,
+                                                                SIPMethod.INVITE, 'none', SERVER_URI, call.call_id)
+                        send_sock = call.caller_socket
                         if self.registered_user.get_by_key(send_sock):
                             end_msg.set_header('to', self.registered_user.get_by_key(send_sock))
-                        else:
-                            end_msg.set_header('to', 'none')
                         self._send_to_client(send_sock, str(end_msg).encode())
-
                         del self.active_calls[call_id]
 
-                    # if the call was register then we need to remove the invalid auth challenge
-                    if call.uri in self.pending_auth:
-                        del self.pending_auth[call.uri]
-        time.sleep(30)
+                        send_sock = call.callee_socket
+                        if send_sock != self.server_socket:
+                            if self.registered_user.get_by_key(send_sock):
+                                end_msg.set_header('to', self.registered_user.get_by_key(send_sock))
+                            else:
+                                end_msg.set_header('to', 'none')
+                            self._send_to_client(send_sock, str(end_msg).encode())
+
+                            del self.active_calls[call_id]
+
+                        # if the call was register then we need to remove the invalid auth challenge
+                        if call.uri in self.pending_auth:
+                            del self.pending_auth[call.uri]
+            time.sleep(30)
+
+    def _cleanup_ip_counters(self):
+        """
+        Periodically cleans up IP tracking dicts to prevent memory overflow.
+        """
+        while self.running:
+            now = time.time()
+            with self.ip_lock:
+                for ip_dict in [self.ip_connection_counts, self.ip_message_counts]:
+                    inactive_ips = []
+                    for key, value in ip_dict.items():
+                        ip_dict[key] = [t for t in value if now - t < self.time_window]
+                        if not ip_dict[key]:
+                            inactive_ips.append(key)
+                    for key in inactive_ips:
+                        del ip_dict[key]
+            time.sleep(60)
 
     def _keep_alive(self):
         """
@@ -984,6 +1074,11 @@ class SIPServer:
                 # pending_keep_alive entry would be removed by the _keep_alive func
         with self.reg_lock:
             self.registered_user.remove_by_key(sock)
+
+        with self.ip_lock:
+            if sock in self.ip_message_counts:
+                # do not clean ip. may be more than one connection. this is for the CONNECTION
+                del self.ip_message_counts[sock] # if he has pending msgs which he probably has then clean his entry
         with self.call_lock:
             end_msg = None
             # Remove a call that the sock is in. If there is another UAC send them an error msg
@@ -1006,6 +1101,7 @@ class SIPServer:
                     if end_msg:
                         print(end_msg)
                         self._send_to_client(send_sock, str(end_msg).encode())
+
 
         sock.close()
 
