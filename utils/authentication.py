@@ -32,3 +32,9 @@ class AuthService:
         ha1 = self._get_ha1(username)
         ha2 = str(self._get_ha2(method, realm))
         return hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()
+
+    def calculate_expected(self, ha1, method, nonce, realm=None):
+        if not realm:
+            realm = self.name
+        ha2 = str(self._get_ha2(method, realm))
+        return hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()

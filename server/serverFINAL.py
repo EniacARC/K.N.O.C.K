@@ -2,6 +2,7 @@ import concurrent.futures
 from collections import defaultdict
 
 from utils.authentication import *
+from utils.user_database import UserDatabase
 import datetime
 import threading
 import time
@@ -188,6 +189,7 @@ class SIPServer:
         # no use for bi map here. there can be a socket in multiple calls still O(n)
         self.pending_auth = {}  # uri -> AuthChallenge
         self.authority = AuthService(SERVER_URI)
+        self.user_db = UserDatabase()
 
         # Connection management - con lock
         self.connected_users = []  # sockets
@@ -545,12 +547,21 @@ class SIPServer:
                         self._send_to_client(sock, str(error_msg).encode())
                     else:
                         answer_now = self.authority.calculate_hash_auth(auth_header_parsed['username'],
-                                                                        SIPMethod.REGISTER,
+                                                                        SIPMethod.INVITE,
+                                                                        auth_header_parsed['nonce'],
+                                                                        auth_header_parsed['realm'])
+                        password = self.user_db.get_password(uri_sender)
+                        if not password:
+                            error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_FOUND,
+                                                                                   SERVER_URI)
+                            self._send_to_client(sock, str(error_msg).encode())
+                            return
+                        expected_result = self.authority.calculate_expected(password, SIPMethod.INVITE,
                                                                         auth_header_parsed['nonce'],
                                                                         auth_header_parsed['realm'])
                         # verify in server
                         if answer_now != auth_header_parsed['response'] or answer_now != self.pending_auth[
-                            call_id].answer:
+                            call_id].answer or answer_now != expected_result:
                             error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.FORBIDDEN,
                                                                                    SERVER_URI)
                             self._send_to_client(sock, str(error_msg).encode())
@@ -681,8 +692,16 @@ class SIPServer:
                                                                     SIPMethod.REGISTER.value,
                                                                     auth_header_parsed['nonce'],
                                                                     auth_header_parsed['realm'])
+                    password = self.user_db.get_password(uri)
+                    if not password:
+                        error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_FOUND, SERVER_URI)
+                        self._send_to_client(sock, str(error_msg).encode())
+                        return
+                    expected_result = self.authority.calculate_expected(password, SIPMethod.REGISTER,
+                                                                        auth_header_parsed['nonce'],
+                                                                        auth_header_parsed['realm'])
 
-                    if answer_now != auth_header_parsed['response'] or answer_now != self.pending_auth[call_id].answer:
+                    if answer_now != auth_header_parsed['response'] or answer_now != self.pending_auth[call_id].answer or answer_now != expected_result:
                         error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.FORBIDDEN, SERVER_URI)
                         self._send_to_client(sock, str(error_msg).encode())
                     else:
