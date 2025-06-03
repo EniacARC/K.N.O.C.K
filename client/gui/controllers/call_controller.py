@@ -21,6 +21,14 @@ class CallController(BaseController):
         self.is_audio = self.model.mic_on
         self.is_video = self.model.camera_on
 
+        # Pre-computed synchronization delays (in seconds)
+        self.sync_window = 0.02  # Acceptable sync window in seconds (e.g. 100ms)
+        self.drift_correction_rate = 0.01  # How aggressively to correct
+
+        # These are initial values and will adapt
+        self.audio_base_delay = 0.045
+        self.video_base_delay = 0.095
+
         self.audio_out = AudioOutput()
         self.imgtk = None
 
@@ -38,22 +46,58 @@ class CallController(BaseController):
 
     def data_loop(self):
         while self.running:
-            frame = self.app.mediator.get_next_audio_frame()
-            if frame:
-                audio_data = frame[1]
+            audio_frame = self.app.mediator.get_next_audio_frame()
+            video_frame = self.app.mediator.get_next_video_frame()
 
-                # Write to audio output stream
+            now = time.time()
+
+            if audio_frame and video_frame:
+                audio_ts, audio_data = audio_frame
+                video_ts, video_data = video_frame
+
+                # --- Calculate drift between streams ---
+                drift = (video_ts + self.video_base_delay) - (audio_ts + self.audio_base_delay)
+
+                # --- Adjust delays to reduce drift ---
+                if abs(drift) > self.sync_window:
+                    correction = self.drift_correction_rate * drift
+                    self.audio_base_delay += correction
+                    self.video_base_delay -= correction
+                    print(
+                        f"Adjusting delays: audio_delay={self.audio_base_delay:.3f}, video_delay={self.video_base_delay:.3f}")
+
+                # Calculate actual playout times
+                target_audio_time = audio_ts + self.audio_base_delay
+                target_video_time = video_ts + self.video_base_delay
+                target_time = max(target_audio_time, target_video_time)
+
+                sleep_time = target_time - now
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+
                 self.temp_play_audio(audio_data)
-            frame = self.app.mediator.get_next_video_frame()
-            if frame:
-                video_data = frame[1]
-                # cv2.imshow('camera', video_data)
-                # if cv2.waitKey(1) & 0xFF == ord('q'):
-                #     break
+                self.temp_play_video(video_data)
+
+            elif audio_frame:
+                audio_ts, audio_data = audio_frame
+                target_time = audio_ts + self.audio_base_delay
+                sleep_time = target_time - now
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                self.temp_play_audio(audio_data)
+
+            elif video_frame:
+                video_ts, video_data = video_frame
+                target_time = video_ts + self.video_base_delay
+                sleep_time = target_time - now
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
                 self.temp_play_video(video_data)
 
             else:
-                time.sleep(0.01)  # Avoid busy waiting
+                time.sleep(0.01)
+
+        time.sleep(1)
 
         print("stopped")
 
@@ -70,6 +114,7 @@ class CallController(BaseController):
         self.running = False
         # self.thread.join() # freezes main thread
         print("ended")
+        self.app.show_screen('make call')
 
     def temp_play_video(self, frame):
         # Convert frame to PIL Image and then to ImageTk.PhotoImage
