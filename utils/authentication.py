@@ -26,7 +26,7 @@ class AuthService:
     def _get_ha2(self, method, realm):
         return hashlib.md5(f"{method}:{realm}".encode()).hexdigest()
 
-    def calculate_hash_auth(self, username, ha1, method, nonce, realm=None):
+    def calculate_hash_auth(self, ha1, method, nonce, realm=None):
         if not realm:
             realm = self.name
         if ha1:

@@ -1,4 +1,4 @@
-import multiprocessing
+from multiprocessing import Semaphore, Process
 import re
 import sqlite3
 import string
@@ -7,7 +7,8 @@ from typing import Optional
 class UserDatabase:
     def __init__(self, db_path: str = "users.db"):
         self.db_path = db_path
-        self.lock = multiprocessing.Lock()
+        self.num_of_aqs = 5
+        self.lock = Semaphore(self.num_of_aqs)
         self._create_table()
 
     def is_valid_username(self, username: str) -> bool:
@@ -24,39 +25,55 @@ class UserDatabase:
         return all(c in allowed_chars for c in password)
 
     def _create_table(self):
-        with self.lock:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS users (
-                        username TEXT NOT NULL UNIQUE PRIMARY KEY,
-                        password TEXT NOT NULL
-                    )
-                """)
-                conn.commit()
+        # write access
+        for _ in range(self.num_of_aqs):
+            self.lock.acquire()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT NOT NULL UNIQUE PRIMARY KEY,
+                    password TEXT NOT NULL
+                )
+            """)
+            conn.commit()
+        for _ in range(self.num_of_aqs):
+            self.lock.release()
 
     def add_user(self, username: str, password: str) -> tuple[bool, str]:
+        return_bool = False
+        return_msg = "invalid username or password"
+        # write access
+        for _ in range(self.num_of_aqs):
+            self.lock.acquire()
+
         try:
-            with self.lock:
-                if self.is_valid_username(username) and self.is_valid_password(password):
-                    with sqlite3.connect(self.db_path) as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
-                        conn.commit()
-                    return True, "success"
-                return False, "invalid username or password"
+            if self.is_valid_username(username) and self.is_valid_password(password):
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+                    conn.commit()
+                return_bool = True
+                return_msg = "success"
         except sqlite3.IntegrityError:
-            return False, "user exists"  # Username already exists
+            return_msg = "user exists"  # Username already exists
+        finally:
+            for _ in range(self.num_of_aqs):
+                self.lock.release()
+            return return_bool, return_msg
 
     def get_password(self, username: str) -> Optional[str]:
-        with self.lock:
-            with sqlite3.connect(self.db_path) as conn:
-                if self.is_valid_username(username):
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
-                    row = cursor.fetchone()
-                    return row[0] if row else None
-                return None
+        return_val = None
+        self.lock.acquire()
+        with sqlite3.connect(self.db_path) as conn:
+            if self.is_valid_username(username):
+                cursor = conn.cursor()
+                cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
+                row = cursor.fetchone()
+                return_val = row[0] if row else None
+        self.lock.release()
+        return return_val
+
 
     def user_exists(self, username: str) -> bool:
         """
@@ -65,20 +82,23 @@ class UserDatabase:
         :param username: The username to check for existence
         :return: True if the user exists, False otherwise
         """
-        with self.lock:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT 1 FROM users WHERE username = ?", (username,))
-                return cursor.fetchone() is not None
+        return_val = False
+        self.lock.acquire()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM users WHERE username = ?", (username,))
+            return_val = cursor.fetchone() is not None
+        self.lock.release()
+        return return_val
 
 
-    def delete_user(self, username: str) -> bool:
-        with self.lock:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM users WHERE username = ?", (username,))
-                conn.commit()
-                return cursor.rowcount > 0
+    # def delete_user(self, username: str) -> bool:
+    #     with self.lock:
+    #         with sqlite3.connect(self.db_path) as conn:
+    #             cursor = conn.cursor()
+    #             cursor.execute("DELETE FROM users WHERE username = ?", (username,))
+    #             conn.commit()
+    #             return cursor.rowcount > 0
 
     def list_users(self):
         with self.lock:
@@ -90,4 +110,4 @@ class UserDatabase:
 
 if __name__ == '__main__':
     my_db = UserDatabase()
-    print(my_db.get_password('user4'))
+    print(my_db.add_user('user6', '122345453'))
