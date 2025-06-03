@@ -7,9 +7,9 @@ import queue
 import cv2
 
 from client.mediator_connect import *
-from rtp_handler import RTPHandler
-from audio_capture import AudioInput
-from video_capture import VideoInput, VideoEncoder, VideoDecoder
+from .rtp_handler import RTPHandler
+from .audio_capture import AudioInput
+from .video_capture import VideoInput, VideoEncoder, VideoDecoder
 
 
 class RTPManager(ControllerAware):
@@ -145,13 +145,11 @@ class RTPManager(ControllerAware):
         print(self.send_video)
         video_io = VideoInput()
         encoder = VideoEncoder()
-        print("works")
 
         # hard coding fps for now
         frame_interval = 1.0 / 30.0  # 30 frames per second → 33.3 ms
         sender = RTPHandler(self.send_ip, send_port=self.send_video)
         sender.start()
-        print("starting")
         while self.running:
             start_time = time.time()
 
@@ -177,6 +175,7 @@ class RTPManager(ControllerAware):
                 encoded_data = receiver.receive_queue.get(timeout=1)
                 decoded_frames = decoder.decode(encoded_data.payload)
                 for frame in decoded_frames:
+                    print(type(frame))
                     self.recv_video_queue.put((encoded_data.timestamp, frame))
                     # img = frame.to_ndarray(format='bgr24')
                     # cv2.imshow('Decoded Frame', img)
