@@ -19,19 +19,20 @@ class AuthService:
         timestamp = int(time.time())  # Current UNIX timestamp
         return f"{timestamp}-{random_part}"  # Combine timestamp and random part
 
-    def _get_ha1(self, username):
+    def _calculate_ha1(self, username, realm, password):
         # in real imp use database connector to get the ha1
-        return TEMP_H1
+        return hashlib.md5(f"{username}:{realm}:{password}".encode()).hexdigest()
 
     def _get_ha2(self, method, realm):
         return hashlib.md5(f"{method}:{realm}".encode()).hexdigest()
 
-    def calculate_hash_auth(self, username, method, nonce, realm=None):
+    def calculate_hash_auth(self, username, ha1, method, nonce, realm=None):
         if not realm:
             realm = self.name
-        ha1 = self._get_ha1(username)
-        ha2 = str(self._get_ha2(method, realm))
-        return hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()
+        if ha1:
+            ha2 = str(self._get_ha2(method, realm))
+            return hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()
+        return None
 
     def calculate_expected(self, ha1, method, nonce, realm=None):
         if not realm:

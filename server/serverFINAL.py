@@ -25,6 +25,8 @@ KEEP_ALIVE_MSG = SIPMsgFactory.create_request(SIPMethod.OPTIONS, SIP_VERSION, "k
 MAX_PASSES_META = 8000  # 8 kb
 MAX_PASSES_BODY = 1000
 
+BANNED_IPS_FILE = "banned_ips.txt"
+
 
 @dataclass
 class RegisteredUser:
@@ -188,8 +190,8 @@ class SIPServer:
         self.active_calls = {}  # call lock. call-id -> Call
         # no use for bi map here. there can be a socket in multiple calls still O(n)
         self.pending_auth = {}  # uri -> AuthChallenge
-        self.authority = AuthService(SERVER_URI)
         self.user_db = UserDatabase()
+        self.authority = AuthService(SERVER_URI)
 
         # Connection management - con lock
         self.connected_users = []  # sockets
@@ -224,6 +226,8 @@ class SIPServer:
             cleanup_thread.start()
             keepalive_thread.start()
 
+            self._load_banned_ips()
+
             # Start server loop
             while self.running:
                 with self.conn_lock:
@@ -246,10 +250,14 @@ class SIPServer:
                         if len(self.ip_connection_counts[client_ip]) > self.connection_threshold:
                             print(f"Blacklisting IP {client_ip} for excessive connections.")
                             self.blacklist_ips.add(client_ip)
+                            del self.ip_connection_counts[client_ip]
                             client_sock.close()
                             continue
 
                         with self.conn_lock:
+
+                            # add encryption
+
                             self.connected_users.append(client_sock)
                         print(f"added client at {addr}")
                     else:
@@ -263,6 +271,7 @@ class SIPServer:
                         # if too many msgs close connection
                         if len(self.ip_message_counts[sock]) > self.msg_rate_limit:
                             print(f"Too many messages from {sock}, closing connection.")
+                            del self.ip_message_counts[sock]
                             self._close_connection(sock)
                             continue
 
@@ -282,6 +291,36 @@ class SIPServer:
                 while self.connected_users:
                     self.connected_users.pop().close()
             self.server_socket.close()
+
+    def _load_banned_ips(self):
+        """
+        Load previously banned IP addresses from the banned IPs file.
+
+        This method reads each line from the BANNED_IPS_FILE and adds valid IP
+        addresses to the self.blacklist_ips set. If the file does not exist,
+        it starts with an empty blacklist and logs that information.
+        """
+        try:
+            with open(BANNED_IPS_FILE, "r") as f:
+                for line in f:
+                    ip = line.strip()
+                    if ip:
+                        self.blacklist_ips.add(ip)
+            print(f"Loaded {len(self.blacklist_ips)} banned IPs.")
+        except FileNotFoundError:
+            print("No banned IP file found. Starting fresh.")
+
+    def _save_banned_ip(self):
+        """
+        Save the current set of blacklisted IP addresses to the banned IPs file.
+
+        This method writes all IP addresses in the self.blacklist_ips set to
+        the BANNED_IPS_FILE, one per line. It overwrites any existing entries
+        with the current set of known banned IPs.
+        """
+        with open(BANNED_IPS_FILE, "a") as f:
+            for ip in self.blacklist_ips:
+                f.write(ip + "\n")
 
     def _worker_process_msg(self, sock, msg):
         """
@@ -348,7 +387,7 @@ class SIPServer:
                 msg.set_header(header, "missing")
         if msg.get_header('cseq')[1] != msg.method:
             status = SIPStatusCode.BAD_REQUEST
-            msg.set_header('cseq', [msg.get_header['cseq'][0], msg.method.lower()])
+            msg.set_header('cseq', [msg.get_header('cseq')[0], msg.method.lower()])
         # elif len(msg.body) != msg.get_header('content-length'):
         #     error_msg.status_code = SIPStatusCode.BAD_REQUEST
 
@@ -383,6 +422,7 @@ class SIPServer:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
                     return
+                call.last_active = datetime.datetime.now()
 
             # call valid - foward request
             send_sock = call.caller_socket if call.caller_socket == sock else call.callee_socket
@@ -415,6 +455,7 @@ class SIPServer:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
                     return
+                call.last_active = datetime.datetime.now()
 
                 print("hello")
                 print(call.call_state)
@@ -456,6 +497,7 @@ class SIPServer:
                     self._send_to_client(sock, str(error_msg).encode())
                     return
                     # the call is in the correct state and can be canceled
+                call.last_active = datetime.datetime.now()
 
             call.last_used_cseq_num = cseq
             call.last_active = datetime.datetime.now()
@@ -464,7 +506,7 @@ class SIPServer:
             self._send_to_client(sock, str(res_msg).encode())
 
             # send cancel to the other side
-            req.set_header('cseq', cseq + 1, req.get_header('cseq')[1])
+            req.set_header('cseq', (cseq + 1, req.get_header('cseq')[1]))
             req.set_header('from', SERVER_URI)
             if call.uri_other is not None:
                 # other uri in invite is always the
@@ -491,6 +533,13 @@ class SIPServer:
         uri_recv = req.get_header('to')
         call_id = req.get_header("call-id")
         cseq = req.get_header('cseq')[0]
+
+        if not self.user_db.user_exists(uri_sender):
+            # register is to the server only
+            error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_FOUND, SERVER_URI)
+            self._send_to_client(sock, str(error_msg).encode())
+            return
+
         with self.call_lock:  # it's better to get the lock for the whole func instead of acquiring multiple times
             # verify call details are the ok
             call = None
@@ -546,22 +595,15 @@ class SIPServer:
                                                                                SERVER_URI)
                         self._send_to_client(sock, str(error_msg).encode())
                     else:
-                        answer_now = self.authority.calculate_hash_auth(auth_header_parsed['username'],
-                                                                        SIPMethod.INVITE,
-                                                                        auth_header_parsed['nonce'],
-                                                                        auth_header_parsed['realm'])
                         password = self.user_db.get_password(uri_sender)
-                        if not password:
-                            error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_FOUND,
-                                                                                   SERVER_URI)
-                            self._send_to_client(sock, str(error_msg).encode())
-                            return
-                        expected_result = self.authority.calculate_expected(password, SIPMethod.INVITE,
+                        answer_now = self.authority.calculate_hash_auth(auth_header_parsed['username'],
+                                                                        password,
+                                                                        SIPMethod.REGISTER,
                                                                         auth_header_parsed['nonce'],
                                                                         auth_header_parsed['realm'])
                         # verify in server
                         if answer_now != auth_header_parsed['response'] or answer_now != self.pending_auth[
-                            call_id].answer or answer_now != expected_result:
+                            call_id].answer:
                             error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.FORBIDDEN,
                                                                                    SERVER_URI)
                             self._send_to_client(sock, str(error_msg).encode())
@@ -607,6 +649,12 @@ class SIPServer:
         if to_uri != SERVER_URI:
             # register is to the server only
             error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_GATEWAY, SERVER_URI)
+            self._send_to_client(sock, str(error_msg).encode())
+            return
+
+        if not self.user_db.user_exists(uri):
+            # register is to the server only
+            error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_FOUND, SERVER_URI)
             self._send_to_client(sock, str(error_msg).encode())
             return
 
@@ -688,20 +736,15 @@ class SIPServer:
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
                 else:
+                    password = self.user_db.get_password(uri)
                     answer_now = self.authority.calculate_hash_auth(auth_header_parsed['username'],
+                                                                    password,
                                                                     SIPMethod.REGISTER.value,
                                                                     auth_header_parsed['nonce'],
                                                                     auth_header_parsed['realm'])
-                    password = self.user_db.get_password(uri)
-                    if not password:
-                        error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_FOUND, SERVER_URI)
-                        self._send_to_client(sock, str(error_msg).encode())
-                        return
-                    expected_result = self.authority.calculate_expected(password, SIPMethod.REGISTER,
-                                                                        auth_header_parsed['nonce'],
-                                                                        auth_header_parsed['realm'])
+                    # answer now based on the vars he sent
 
-                    if answer_now != auth_header_parsed['response'] or answer_now != self.pending_auth[call_id].answer or answer_now != expected_result:
+                    if answer_now != auth_header_parsed['response'] or answer_now != self.pending_auth[call_id].answer:
                         error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.FORBIDDEN, SERVER_URI)
                         self._send_to_client(sock, str(error_msg).encode())
                     else:
@@ -768,13 +811,12 @@ class SIPServer:
     def _create_auth_challenge(self, sock, request):
         """
         Send an authentication challenge to the client.
-
         :param sock: Socket to send the challenge to
         :type sock: socket.socket
         :param request: Original SIP request needing authentication
         :type request: SIPRequest
         """
-        """Send authentication challenge for REGISTER request"""
+        # we assume the function that called us verified the user exists otherwise we store None
         method = request.method
         call_id = request.get_header('call-id')
         uri = request.get_header('from')
@@ -783,9 +825,10 @@ class SIPServer:
         with self.call_lock:
             # Generate nonce
             nonce = AuthService.generate_nonce().lower()
+            password = self.user_db.get_password(uri)
             # Create challenge
             challenge = AuthChallenge(
-                answer=self.authority.calculate_hash_auth(uri, method, nonce, SERVER_URI),
+                answer=self.authority.calculate_hash_auth(uri, password, method, nonce, SERVER_URI),
                 created_time=datetime.datetime.now()
             )
             self.pending_auth[call_id] = challenge

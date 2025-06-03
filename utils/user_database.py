@@ -51,10 +51,26 @@ class UserDatabase:
     def get_password(self, username: str) -> Optional[str]:
         with self.lock:
             with sqlite3.connect(self.db_path) as conn:
+                if self.is_valid_username(username):
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
+                    row = cursor.fetchone()
+                    return row[0] if row else None
+                return None
+
+    def user_exists(self, username: str) -> bool:
+        """
+        Check if a user with the given username exists in the database.
+
+        :param username: The username to check for existence
+        :return: True if the user exists, False otherwise
+        """
+        with self.lock:
+            with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT password FROM users WHERE username = ?", (username,))
-                row = cursor.fetchone()
-                return row[0] if row else None
+                cursor.execute("SELECT 1 FROM users WHERE username = ?", (username,))
+                return cursor.fetchone() is not None
+
 
     def delete_user(self, username: str) -> bool:
         with self.lock:

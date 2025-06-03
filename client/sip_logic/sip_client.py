@@ -223,7 +223,8 @@ class SIPHandler(ControllerAware):
             # not valid
             self.clear_call()
         else:
-            response = self.auth_authority.calculate_hash_auth(self.uri, method.value, nonce, realm)
+            ha1 = self.auth_authority._calculate_ha1(self.uri, self.password, realm)
+            response = self.auth_authority.calculate_hash_auth(self.uri, self.password, method.value, nonce, realm)
 
             auth_header = f'digest username="{self.uri}", realm="{realm}", nonce="{nonce}", response="{response}"'
 
