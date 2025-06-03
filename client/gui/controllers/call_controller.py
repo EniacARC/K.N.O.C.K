@@ -71,6 +71,7 @@ class CallController(BaseController):
                 target_video_time = video_ts + self.video_base_delay
                 target_time = max(target_audio_time, target_video_time)
 
+
                 sleep_time = target_time - now
                 if sleep_time > 0:
                     time.sleep(sleep_time)
