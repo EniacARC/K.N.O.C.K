@@ -31,7 +31,16 @@ def send_tcp(sock, data):
 
 
 def send_sip_tcp(sock, data):
-    """data in bytes"""
+    """
+    Send data over a TCP socket.
+
+    :param sock: The TCP socket.
+    :type sock: socket.socket
+    :param data: The data to be sent.
+    :type data: bytes
+
+    :return: None
+    """
     try:
         sent = 0
         while sent < len(data):
@@ -143,6 +152,24 @@ def recv_sip_body(sock, num, max_passes):
 
 
 def receive_tcp_sip(sock, max_passes_metadata, max_passes_body):
+    """
+    Receive and parse a SIP message
+
+    This function first reads the SIP metadata from the socket, parses it into a SIP message,
+    and if a `Content-Length` header is present and non-zero, it reads the corresponding body as well.
+
+    :param sock: the TCP socket to receive data from
+    :type sock: socket.socket
+
+    :param max_passes_metadata: maximum number of read attempts for the SIP metadata
+    :type max_passes_metadata: int
+
+    :param max_passes_body: maximum number of read attempts for the SIP body
+    :type max_passes_body: int
+
+    :return: parsed SIP message if successful, otherwise None
+    :rtype: SIPMessage or None
+    """
     metadata = recv_sip_metadata(sock, max_passes_metadata)
     sip_msg = SIPMsgFactory.parse(metadata)
     if sip_msg:

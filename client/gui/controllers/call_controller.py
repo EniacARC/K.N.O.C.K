@@ -36,15 +36,33 @@ class CallController(BaseController):
         self.start_stream()
 
     def bind(self):
+        """
+        Bind GUI buttons to their corresponding event handlers.
+
+        :params: none
+        :returns: none
+        """
         self.view.mute_btn.config(command=self.on_mute)
         self.view.end_call_btn.config(command=self.end_call)
 
     def start_stream(self):
+        """
+        Start the background thread for audio/video playback.
+
+        :params: none
+        :returns: none
+        """
         self.running = True
         self.thread = threading.Thread(target=self.data_loop, daemon=True)
         self.thread.start()
 
     def data_loop(self):
+        """
+        Main loop to fetch and synchronize audio/video frames, then play them.
+
+        :params: none
+        :returns: none
+        """
         while self.running:
             audio_frame = self.app.mediator.get_next_audio_frame()
             video_frame = self.app.mediator.get_next_video_frame()
@@ -103,6 +121,12 @@ class CallController(BaseController):
         print("stopped")
 
     def on_mute(self):
+        """
+        Toggle audio mute/unmute and update button label accordingly.
+
+        :params: none
+        :returns: none
+        """
         # turn
         self.is_audio = not self.is_audio
 
@@ -112,12 +136,26 @@ class CallController(BaseController):
             self.view.mute_btn.config(text="unmute")
 
     def end_call(self):
+        """
+        End the current call and return to the 'make call' screen.
+
+        :params: none
+        :returns: none
+        """
         self.running = False
         # self.thread.join() # freezes main thread
         print("ended")
         self.app.show_screen('make call')
 
     def temp_play_video(self, frame):
+        """
+        Display a video frame in the video UI component.
+
+        :param frame: raw BGR video frame from decoder
+        :type frame: numpy.ndarray
+
+        :returns: none
+        """
         # Convert frame to PIL Image and then to ImageTk.PhotoImage
         img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         # Resize image exactly to 640x480 to keep resolution consistent (optional)
@@ -131,5 +169,13 @@ class CallController(BaseController):
         self.view.video_box.after(0, update)
 
     def temp_play_audio(self, frame):
+        """
+        Play an audio frame using the audio output device.
+
+        :param frame: raw audio data
+        :type frame: bytes
+
+        :returns: none
+        """
         self.audio_out.write(frame)
 

@@ -29,6 +29,14 @@ class AppController(ControllerAware):
         self.current_screen = ""
 
     def show_screen(self, screen_name):
+        """
+        Show the screen specified by screen_name, initializing its controller.
+
+        :param screen_name: name of the screen to switch to
+        :type screen_name: str
+
+        :returns: none
+        """
         if self.current_screen != "": # if this is not the first screen
             self.current_controller.on_destroy()
 
@@ -39,15 +47,40 @@ class AppController(ControllerAware):
         self.current_controller = self.controllers[screen_name](self, view_obj, self.model)
         # not need for on_show. the on_show is now the constractor
     def display_error(self, msg, return_to):
+        """
+        Display an error message and navigate to the error screen.
+
+        :param msg: the error message to display
+        :type msg: str
+
+        :param return_to: screen name to return to after error
+        :type return_to: str
+
+        :returns: none
+        """
         self.model.error.set_error(msg, return_to)
         self.show_screen('error')
 
     # mediator funcs
     def start(self):
+        """
+        Start the application by showing the login screen and starting the GUI loop.
+
+        :params: none
+        :returns: none
+        """
         self.show_screen("login")
         self.view.start_mainloop()
 
     # mediator is called from another thread. we need tp update in a thread safe way
     def switch_screen_mediator(self, screen_name):
+        """
+        Switch screen from a different thread using thread-safe call.
+
+        :param screen_name: name of the screen to switch to
+        :type screen_name: str
+
+        :returns: none
+        """
         self.view.root.after(0, lambda: self.show_screen(screen_name))
 

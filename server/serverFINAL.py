@@ -712,8 +712,8 @@ class SIPServer:
                         print(user)
                         self.registered_user.add(user)  # overrides previous register if exists
                         print("registered")
-                        self._send_to_client(sock, SIPMsgFactory.create_response_from_request(req, SIPStatusCode.OK,
-                                                                                              SERVER_URI))
+                        self._send_to_client(sock, str(SIPMsgFactory.create_response_from_request(req, SIPStatusCode.OK,
+                                                                                              SERVER_URI)).encode())
 
                     need_auth = False
 

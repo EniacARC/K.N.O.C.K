@@ -34,6 +34,9 @@ class RTPHandler:
         self.ssrc = ssrc if ssrc else random.randint(0, 50000) # identifies src
 
     def start(self):
+        """
+        Start the RTP handler: binds socket if in receive mode and starts receive thread.
+        """
         if self.running:
             return
 
@@ -56,8 +59,12 @@ class RTPHandler:
         print("RTP Handler stopped")
 
     def send_packet(self, data):
-        """Thread function to send RTP packets"""
-        """get data in bytes"""
+        """
+        Send RTP packets with given payload data.
+
+        :param data: the raw byte payload to be sent (can be fragmented to multiple packets)
+        :type data: bytes
+        """
         try:
             # the sequence number is not controlled by the high logic but by transport logic, so it belongs here.
             # if random.randint(1, 100) == 2:
@@ -77,7 +84,9 @@ class RTPHandler:
             print(f"Error in send loop: {e}")
 
     def _receive_loop(self):
-        """Thread function to receive RTP packets"""
+        """
+        Internal thread function that continuously receives RTP packets and reassembles full frames.
+        """
         while self.running:
             try:
                 # Set a timeout so we can check running flag periodically
@@ -133,6 +142,15 @@ class RTPHandler:
 
 
     def _build_packets(self, payload):
+        """
+        Build one or more RTP packets from a given payload, splitting if necessary.
+
+        :param payload: the full payload to be sent in RTP format (e.g., video frame)
+        :type payload: bytes
+
+        :return: list of RTPPacket objects, each containing part of the payload
+        :rtype: list[RTPPacket]
+        """
         to_send = []
         timestamp = RTPPacket().timestamp
         m = RTPPacket()

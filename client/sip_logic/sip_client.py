@@ -41,7 +41,12 @@ class SIPHandler(ControllerAware):
 
 
     def connect(self):
-        """Establish connection to the SIP server"""
+        """
+        Establish connection to the SIP server
+
+        :return: whether connection succeeded
+        :rtype: bool
+        """
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.connect((self.server_ip, self.server_port))
@@ -53,15 +58,29 @@ class SIPHandler(ControllerAware):
             return False
 
     def disconnect(self):
-        """Close connection to the SIP server"""
+        """
+        Close connection to the SIP server
+        :params: None
+        :returns: None
+        """
         if self.connected:
             self.socket.close()
             print("Disconnected from server")
 
     def start(self):
+        """
+        Start the SIP handler main loop in a new thread
+        :params: none
+        :returns: none
+        """
         main_loop = threading.Thread(target=self._main_loop)
         main_loop.start()
     def _main_loop(self):
+        """
+        Main loop for handling SIP messages
+        :params: none
+        :returns: none
+        """
         if not self.connected:
             return
         while self.connected:
@@ -100,6 +119,12 @@ class SIPHandler(ControllerAware):
                         self.process_response(msg)
 
     def process_request(self, msg):
+        """
+        Handle an incoming SIP request
+
+        :param msg: the SIP request message
+        :type msg: SIPRequest
+        """
         # Only one call supported, so just handle requests for current call
         if self.call_type != SIPCallType.INVITE:
             raise Exception("unexpected message for current call type")
@@ -113,6 +138,15 @@ class SIPHandler(ControllerAware):
             self.process_bye(msg)
 
     def answer_call(self, msg, answer_call):
+        """
+        Answer an incoming SIP call
+
+        :param msg: the original INVITE message
+        :type msg: SIPRequest
+
+        :param answer_call: whether to accept the call or not
+        :type answer_call: bool
+        """
         print("answring call")
         # answer = input(f"Do you accept call from {who}? Y/N ")
         # if by the time we answer we get a cancel request then we will be able to process it, the server will return an error msg
@@ -153,11 +187,23 @@ class SIPHandler(ControllerAware):
             print("The call has changed it's state")
 
     def process_bye(self, msg):
+        """
+        Handle a BYE request to terminate the call
+
+        :param msg: the BYE SIP message
+        :type msg: SIPRequest
+        """
         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK)
         send_sip_tcp(self.socket, str(res).encode())
         # send stop stream event to mediator
         self.clear_call()
     def process_invite(self, msg):
+        """
+        Handle an INVITE request and send a RINGING response
+
+        :param msg: the INVITE SIP message
+        :type msg: SIPRequest
+        """
         # Accept call
         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.RINGING, self.uri)
         if send_sip_tcp(self.socket, str(res).encode()):
@@ -170,6 +216,12 @@ class SIPHandler(ControllerAware):
 
 
     def process_cancel(self, msg):
+        """
+        Handle a CANCEL request to abort an incoming call
+
+        :param msg: the CANCEL SIP message
+        :type msg: SIPRequest
+        """
         if self.call_state == SIPCallState.RINGING:
             res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri)
             if send_sip_tcp(self.socket, str(res).encode()):
@@ -178,6 +230,12 @@ class SIPHandler(ControllerAware):
                     self.call_state = SIPCallState.TRYING_CANCEL
 
     def process_ack(self, msg):
+        """
+        Handle an incoming ACK request
+
+        :param msg: the ACK SIP message
+        :type msg: SIPRequest
+        """
         if self.call_state == SIPCallState.TRYING_CANCEL:
             # Cancel completed, clear call
             self.clear_call()
@@ -187,6 +245,15 @@ class SIPHandler(ControllerAware):
             self.controller.start_stream()
 
     def _parse_auth_request(self, header):
+        """
+        Parse WWW-Authenticate header for Digest authentication
+
+        :param header: the WWW-Authenticate header value
+        :type header: str
+
+        :return: dictionary with parsed auth fields or None
+        :rtype: dict or None
+        """
         if not header or not header.lower().startswith("digest "):
             return None
 
@@ -208,6 +275,12 @@ class SIPHandler(ControllerAware):
 
         return parsed
     def send_auth_response(self, msg):
+        """
+        Send an authentication response to the SIP server
+
+        :param msg: the original SIP message requiring auth
+        :type msg: SIPMessage
+        """
         print("auth")
         if self.call_type == SIPCallType.INVITE:
             method = SIPMethod.INVITE
@@ -241,6 +314,12 @@ class SIPHandler(ControllerAware):
             send_sip_tcp(self.socket, str(req).encode())
 
     def process_response(self, msg):
+        """
+        Process a SIP response message
+
+        :param msg: the SIP response message
+        :type msg: SIPResponse
+        """
         # Process responses for current call if needed
         if self.call_state == SIPCallState.WAITING_AUTH and msg.status_code == SIPStatusCode.UNAUTHORIZED:
             # we need to send auth response
@@ -302,6 +381,10 @@ class SIPHandler(ControllerAware):
 
 
     def register(self):
+        """
+        Register this user with the SIP server
+        :returns: none
+        """
         req = SIPMsgFactory.create_request(SIPMethod.REGISTER, SIP_VERSION, SERVER_URI, self.uri, "1233", 1)
         self.current_call_id = "1233"
         self.call_type = SIPCallType.REGISTER
@@ -309,6 +392,12 @@ class SIPHandler(ControllerAware):
         send_sip_tcp(self.socket, str(req).encode())
 
     def invite(self, uri):
+        """
+        Initiate an INVITE (call) to another SIP URI
+
+        :param uri: the destination SIP URI
+        :type uri: str
+        """
         call_id = generate_random_call_id()
         session_id = SDP.generate_session_id()
 
@@ -327,6 +416,10 @@ class SIPHandler(ControllerAware):
 
 
     def clear_call(self):
+        """
+        Clear the current call state and reset call-related data
+        :returns: none
+        """
         print(f"Terminating call {self.current_call_id}")
         self.current_call_id = None
         self.call_type = None

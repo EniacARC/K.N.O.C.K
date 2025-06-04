@@ -21,6 +21,12 @@ class AudioIO(ABC):
     #     pass
 
     def close(self):
+        """
+        Close the audio stream and terminate the audio interface.
+
+        :params: none
+        :returns: none
+        """
         if self.stream:
             self.stream.close()
         self.audio.terminate()
@@ -34,6 +40,13 @@ class AudioInput(AudioIO):
                                       input=True,
                                       frames_per_buffer=CHUNK)
     def read(self):
+        """
+            Read a chunk of audio data from the input stream.
+
+            :params: none
+            :return: raw audio data read from the stream
+            :rtype: bytes
+            """
         return self.stream.read(CHUNK, exception_on_overflow=False)
 
 class AudioOutput(AudioIO):
@@ -45,6 +58,14 @@ class AudioOutput(AudioIO):
                                     output=True,
                                     frames_per_buffer=CHUNK)
     def write(self, audio_data):
+        """
+        Write audio data to the output stream.
+
+        :param audio_data: raw audio data to be written
+        :type audio_data: bytes
+
+        :returns: none
+        """
         self.stream.write(audio_data)
 
 

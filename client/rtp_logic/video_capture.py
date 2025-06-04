@@ -15,7 +15,14 @@ class VideoInput:
     _instance_lock = threading.Lock()
 
     def __new__(cls, *args, **kwargs):
+        """
+        Create or return the singleton instance of VideoInput.
 
+        :params: none
+
+        :return: singleton instance of VideoInput
+        :rtype: VideoInput
+        """
         if not cls._instance:
             with cls._instance_lock:
                 if not cls._instance:
@@ -43,6 +50,14 @@ class VideoInput:
         self._initialized = True
 
     def get_frame(self):
+        """
+        Capture a single video frame from the camera in a thread-safe manner.
+
+        :params: none
+
+        :return: captured video frame as numpy.ndarray or None if failed
+        :rtype: numpy.ndarray or None
+        """
         with self._read_lock:
             ret, frame = self.cap.read()
             if not ret or frame is None:
@@ -50,36 +65,15 @@ class VideoInput:
             return frame
 
     def close(self):
+        """
+        Release the camera resource safely with thread synchronization.
+
+        :params: none
+        :returns: none
+        """
         with self._read_lock:
             if self.cap.isOpened():
                 self.cap.release()
-
-# class VideoInput:
-#     def __init__(self):
-#         self.cap = cv2.VideoCapture(0)
-#         if not self.cap.isOpened():
-#             print("Camera not available!")
-#         else:
-#             print("starting camera")
-#         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
-#         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
-#         self.cap.set(cv2.CAP_PROP_FPS, FPS)
-#         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-#
-#     def get_frame(self):
-#         ret, frame = self.cap.read()
-#         if not ret:
-#             return None
-#         return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-#
-#     def close(self):
-#         self.cap.release()
-
-# class VideoOutput:
-#     def display_frame(self, frame):
-#         img = frame.to_ndarray(format='bgr24')
-#         cv2.imshow('Decoded Frame', img)
-#         cv2.waitKey(1)
 
 
 class VideoEncoder:
@@ -102,6 +96,15 @@ class VideoEncoder:
         # self.read_queue = Queue.queue()
 
     def encode(self, frame):
+        """
+        Encode a BGR video frame to H.264 format using the PyAV encoder.
+
+        :param frame: input video frame in BGR format (as returned from OpenCV)
+        :type frame: numpy.ndarray
+
+        :return: list of encoded video packets
+        :rtype: list[av.Packet]
+        """
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         video_frame = av.VideoFrame.from_ndarray(frame_rgb, format='rgb24')
         packets = self.encoder.encode(video_frame)
@@ -114,62 +117,16 @@ class VideoDecoder:
         self.decoder.open()
 
     def decode(self, frame):
+        """
+        Decode a raw H.264 encoded frame into decoded video frames.
+
+        :param frame: raw H.264 encoded frame bytes
+        :type frame: bytes
+
+        :return: list of decoded video frames
+        :rtype: list[av.VideoFrame]
+        """
         pkt = av.Packet(frame)
         frames = self.decoder.decode(pkt)
         return frames
 
-# class VideoHandler:
-#     def __init__(self, encoder=True):
-#         self.is_encoder = encoder
-#         self.cap = cv2.VideoCapture(0)
-#         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
-#         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
-#         self.cap.set(cv2.CAP_PROP_FPS, FPS)
-#         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-#         if encoder:
-#             self.codec = av.CodecContext.create('h264', 'w')
-#             self.codec.width = WIDTH
-#             self.codec.height = HEIGHT
-#             self.codec.time_base = Fraction(1, FPS)
-#             self.codec.framerate = Fraction(FPS, 1)
-#             self.codec.pix_fmt = 'yuv420p'
-#             self.codec.options = {
-#                 'preset': 'ultrafast',
-#                 'tune': 'zerolatency',
-#                 'g': '30',
-#                 'bf': '0'
-#             }
-#
-#             self.codec.max_b_frames = 0
-#             # self.read_queue = Queue.queue()
-#         else:
-#             self.codec = av.CodecContext.create('h264', 'r')
-#             self.codec.options = {'flags2': '+fast'}
-#         self.codec.open()
-#
-#     def encode(self):
-#         if self.is_encoder:
-#             ret, frame = self.cap.read()
-#             if not ret:
-#                 return None
-#             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-#             video_frame = av.VideoFrame.from_ndarray(frame_rgb, format='rgb24')
-#             video_frame.time_base = Fraction(1, FPS)
-#
-#             return self.codec.encode(video_frame)
-#         else:
-#             raise RuntimeError("cannot encode in decode mode")
-#
-#     def decoder(self, video_frame):
-#         try:
-#             frames = self.codec.decode(video_frame)
-#             for frame in frames:
-#                 yield frame
-#         except Exception:
-#             return None
-#         else:
-#             raise RuntimeError("cannot decode in encode mode")
-#
-#     def close(self):
-#         self.stream.close()
-#         self.audio.terminate()

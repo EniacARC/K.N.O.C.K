@@ -8,6 +8,30 @@ class SDP:
     SDP_FORMAT = r'^[v,o,c,m].*?=.*'
 
     def __init__(self, version, ip, session_id, video_port=None, video_format=None, audio_port=None, audio_format=None):
+        """
+        Initializes an SDP object with the given session and media details.
+
+        :param version: SDP version (typically 0).
+        :type version: int
+
+        :param ip: IP address associated with the session.
+        :type ip: str
+
+        :param session_id: Unique identifier for the session.
+        :type session_id: str
+
+        :param video_port: Optional port for video media.
+        :type video_port: int or None
+
+        :param video_format: Optional format(s) for video media.
+        :type video_format: str or None
+
+        :param audio_port: Optional port for audio media.
+        :type audio_port: int or None
+
+        :param audio_format: Optional format(s) for audio media.
+        :type audio_format: str or None
+        """
         self.version = version # usually 0
         self.ip = ip
         self.video_port = video_port
@@ -18,6 +42,17 @@ class SDP:
 
     @staticmethod
     def can_parse(msg):
+        """
+        Validates whether the provided message can be parsed as a valid SDP.
+
+        Checks for required keys, non-empty values, and basic line structure.
+
+        :param msg: Raw SDP message as a string.
+        :type msg: str
+
+        :return: True if the message can be parsed as a valid SDP, False otherwise.
+        :rtype: bool
+        """
         try:
             # Check if the message matches the expected format
             if not re.match(SDP.SDP_FORMAT, msg):
@@ -59,6 +94,15 @@ class SDP:
 
     @staticmethod
     def parse(msg):
+        """
+        Parses a raw SDP message string and returns an SDP object.
+
+        :param msg: Raw SDP message as a string.
+        :type msg: str
+
+        :return: SDP object if parsing is successful, None otherwise.
+        :rtype: SDP or None
+        """
         if not SDP.can_parse(msg):
             print("Parse failed: Message cannot be parsed (failed can_parse check).")
             return None
@@ -158,6 +202,12 @@ class SDP:
             return None
 
     def __str__(self):
+        """
+        Returns the SDP object as a string representation in standard SDP format.
+
+        :return: String representation of the SDP message.
+        :rtype: str
+        """
         lines = [f"v={self.version}", f"o=- {self.session_id} IN IP4 {self.ip}", f"c=IN IP4 {self.ip}"]
         if self.audio_port and self.audio_format:
             lines.append(f"m=audio {self.audio_port} RTP/AVP {self.audio_format}")
@@ -167,4 +217,10 @@ class SDP:
 
     @staticmethod
     def generate_session_id():
+        """
+        Generates a random 16-digit numeric session ID.
+
+        :return: A random session ID as a string.
+        :rtype: str
+        """
         return ''.join(random.choices(string.digits, k=16))

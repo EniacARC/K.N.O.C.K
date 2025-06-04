@@ -23,6 +23,16 @@ class View:
 
         self.current_view = None
     def switch(self, name):
+        """
+        Switch the current view to the one specified by name.
+
+        Destroys the current view to save memory and displays the new view in full screen.
+
+        :param name: name of the view to switch to (e.g., "login", "video", etc.)
+        :type name: str
+
+        :returns: none
+        """
         new_frame = self.views[name](self.root)
         if self.current_view is not None:
             self.current_view.destroy() # destroy old frame to save memory
@@ -30,4 +40,12 @@ class View:
         self.current_view.grid(row=0, column=0, sticky="nsew") # cover the whole screen
 
     def start_mainloop(self):
+        """
+        Start the main event loop of the GUI.
+
+        This method blocks and keeps the window open until closed by the user.
+
+        :params: none
+        :returns: none
+        """
         self.root.mainloop()

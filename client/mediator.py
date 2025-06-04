@@ -54,7 +54,6 @@ class Mediator(MediatorInterface):
     # set sip -> all
     def start_stream(self):
         self.rtp_manager.start_rtp_comms()
-        print("started rtp")
         self.gui.switch_screen_mediator('video')
     def stop_rtp_stream(self):
         self.rtp_manager.stop()
