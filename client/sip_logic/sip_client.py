@@ -1,5 +1,7 @@
 import socket
 import threading
+from dataclasses import dataclass
+from typing import Optional
 
 import select
 
@@ -16,12 +18,18 @@ MAX_PASSES_META = 8000  # 8 kb
 MAX_PASSES_BODY = 1000
 
 
-
+@dataclass
+class Call:  # For both invite and register
+    call_type: SIPCallType
+    call_id: str
+    remote_uri: str
+    call_state: SIPCallState
+    last_used_cseq_num: int
+    call_data: Optional[object] = None
 
 class SIPHandler(ControllerAware):
     def __init__(self, username, password):
         super().__init__()
-
         self.uri = username
         self.password = password
         self.server_ip = SERVER_IP
@@ -29,24 +37,15 @@ class SIPHandler(ControllerAware):
         self.socket = None
         self.connected = False
 
-        # self.calls = {} # call_id callObj
-
-        # Only one call at a time
-        self.current_call_id = None
-        self.call_type = None
-        self.call_state = None
+        # self.current_call_id = None
+        # self.call_type = None
+        # self.call_state = None
+        self.call = None
 
         self.auth_authority = AuthService(SERVER_URI)
-        # self.rtp_manager = RTPManager()
-
+        self.lingering_data = None
 
     def connect(self):
-        """
-        Establish connection to the SIP server
-
-        :return: whether connection succeeded
-        :rtype: bool
-        """
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.connect((self.server_ip, self.server_port))
@@ -58,29 +57,14 @@ class SIPHandler(ControllerAware):
             return False
 
     def disconnect(self):
-        """
-        Close connection to the SIP server
-        :params: None
-        :returns: None
-        """
         if self.connected:
             self.socket.close()
             print("Disconnected from server")
 
     def start(self):
-        """
-        Start the SIP handler main loop in a new thread
-        :params: none
-        :returns: none
-        """
-        main_loop = threading.Thread(target=self._main_loop)
-        main_loop.start()
+        threading.Thread(target=self._main_loop).start()
+
     def _main_loop(self):
-        """
-        Main loop for handling SIP messages
-        :params: none
-        :returns: none
-        """
         if not self.connected:
             return
         while self.connected:
@@ -88,230 +72,146 @@ class SIPHandler(ControllerAware):
             for sock in readable:
                 msg = receive_tcp_sip(sock, MAX_PASSES_META, MAX_PASSES_BODY)
                 print(f"{self.uri} recvd: {msg}")
+
                 if isinstance(msg, SIPRequest):
-                    if msg.method == SIPMethod.OPTIONS.value:
-                        # keep alive
-                        res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri)
-                        send_sip_tcp(self.socket, str(res).encode())
+                    self._handle_request(msg)
+                elif msg.get_header('call-id') == self.call.current_call_id:
+                    self.process_response(msg)
 
-                    elif msg.method == SIPMethod.INVITE.value:
-                        if self.current_call_id is not None:
-                            # Already in call, reject new
-                            res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.DECLINE, self.uri)
-                            send_sip_tcp(self.socket, str(res).encode())
-                        else:
-                            # Accept new call
-                            self.current_call_id = msg.get_header('call-id')
-                            self.call_type = SIPCallType.INVITE
-                            self.call_state = None
-                            self.process_invite(msg)
+    def _handle_request(self, msg):
+        method = msg.method
 
-                    elif msg.get_header('call-id') == self.current_call_id:
-                        self.process_request(msg)
+        if method == SIPMethod.OPTIONS.value:
+            self._handle_options(msg)
+        elif method == SIPMethod.INVITE.value:
+            self._handle_invite(msg)
+        elif msg.get_header('call-id') == self.call.current_call_id:
+            self.process_request(msg)
 
-                    else:
-                        # Unknown call-id and not INVITE, ignore or handle as needed
-                        pass
+    def _handle_options(self, msg):
+        res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri)
+        send_sip_tcp(self.socket, str(res).encode())
 
-                else:
-                    # It's a response, must belong to current call
-                    if msg.get_header('call-id') == self.current_call_id:
-                        self.process_response(msg)
+    def _handle_invite(self, msg):
+        if self.call:
+            res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.DECLINE, self.uri)
+            send_sip_tcp(self.socket, str(res).encode())
+        else:
+            self.call = Call(
+                call_type=SIPCallType.INVITE,
+                call_id=msg.get_header('call-id'),
+                remote_uri=msg.get_header('from'),
+                call_state=SIPCallState.RINGING,
+                last_used_cseq_num=msg.get_header('cseq')[0],
+
+            )
+            self.process_invite(msg)
 
     def process_request(self, msg):
-        """
-        Handle an incoming SIP request
-
-        :param msg: the SIP request message
-        :type msg: SIPRequest
-        """
-        # Only one call supported, so just handle requests for current call
-        if self.call_type != SIPCallType.INVITE:
-            raise Exception("unexpected message for current call type")
+        if self.call.call_type != SIPCallType.INVITE:
+            raise Exception("Unexpected message for current call type")
 
         if msg.method == SIPMethod.CANCEL.value:
             self.process_cancel(msg)
         elif msg.method == SIPMethod.ACK.value:
-            print("recvd ack request")
             self.process_ack(msg)
         elif msg.method == SIPMethod.BYE.value:
             self.process_bye(msg)
 
-    def answer_call(self, msg, answer_call):
-        """
-        Answer an incoming SIP call
+    def answer_call(self, answer_call):
+        if self.call.call_state != SIPCallState.RINGING:
+            print("The call has changed its state")
+            return
 
-        :param msg: the original INVITE message
-        :type msg: SIPRequest
-
-        :param answer_call: whether to accept the call or not
-        :type answer_call: bool
-        """
-        print("answring call")
-        # answer = input(f"Do you accept call from {who}? Y/N ")
-        # if by the time we answer we get a cancel request then we will be able to process it, the server will return an error msg
-        if self.call_state == SIPCallState.RINGING: # we might get a cancel request in the meantime
-            if answer_call:
-                self.call_state = SIPCallState.WAITING_ACK
-                sdp_recv = SDP.parse(msg.body)
-                if sdp_recv:
-                    self.controller.set_remote_ip(sdp_recv.ip)
-
-                    if sdp_recv.audio_port:
-                        self.controller.set_send_audio(sdp_recv.audio_port)
-                    if sdp_recv.video_port:
-                        self.controller.set_send_video(sdp_recv.video_port)
-
-                    self.controller.set_recv_ports(video=True, audio=True)
-
-                    local_sdp = SDP(0, '127.0.0.1', sdp_recv.session_id,
-                           video_port=self.controller.get_recv_video_port(), video_format='h.264', # maybe not(?)
-                           audio_port=self.controller.get_recv_audio_port(), audio_format='acc' # not the real format
-                           )
-
-                    res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri, body=str(local_sdp))
-                    print("sending to the other side")
-                    send_sip_tcp(self.socket, str(res).encode())
-                    return
-
-            # Further processing of SDP or call setup can go here
-            # get sdp of other
-            # build my sdp
-            # send sdp in 200ok
-
-            # if not answer then reject call
-            res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.DECLINE, self.uri)
+        if answer_call:
+            self.call.call_state = SIPCallState.WAITING_ACK
+            self._handle_call_acceptance()
+        else:
+            res = SIPMsgFactory.create_response_from_request(self.lingering_data, SIPStatusCode.DECLINE, self.uri)
             send_sip_tcp(self.socket, str(res).encode())
             self.clear_call()
-        else:
-            print("The call has changed it's state")
 
-    def process_bye(self, msg):
-        """
-        Handle a BYE request to terminate the call
+        self.lingering_data = None
 
-        :param msg: the BYE SIP message
-        :type msg: SIPRequest
-        """
-        res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK)
+    def _handle_call_acceptance(self):
+        sdp_recv = SDP.parse(self.lingering_data.body)
+        if not sdp_recv:
+            return
+
+        self.controller.set_remote_ip(sdp_recv.ip)
+        if sdp_recv.audio_port:
+            self.controller.set_send_audio(sdp_recv.audio_port)
+        if sdp_recv.video_port:
+            self.controller.set_send_video(sdp_recv.video_port)
+
+        self.controller.set_recv_ports(video=True, audio=True)
+
+        local_sdp = SDP(0, '127.0.0.1', sdp_recv.session_id,
+                        video_port=self.controller.get_recv_video_port(), video_format='h.264',
+                        audio_port=self.controller.get_recv_audio_port(), audio_format='acc')
+
+        res = SIPMsgFactory.create_response_from_request(
+            self.lingering_data, SIPStatusCode.OK, self.uri, body=str(local_sdp))
         send_sip_tcp(self.socket, str(res).encode())
-        # send stop stream event to mediator
-        self.clear_call()
-    def process_invite(self, msg):
-        """
-        Handle an INVITE request and send a RINGING response
 
-        :param msg: the INVITE SIP message
-        :type msg: SIPRequest
-        """
-        # Accept call
+    def process_invite(self, msg):
         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.RINGING, self.uri)
         if send_sip_tcp(self.socket, str(res).encode()):
-            print("sent ringing")
-            self.call_state = SIPCallState.RINGING
-            # call gui for answer (using event, not blocking main thread for recv)
-
-            # self.controller.answer_call(msg)
-            self.answer_call(msg, True)
-
+            self.call.call_data = msg
 
     def process_cancel(self, msg):
-        """
-        Handle a CANCEL request to abort an incoming call
-
-        :param msg: the CANCEL SIP message
-        :type msg: SIPRequest
-        """
-        if self.call_state == SIPCallState.RINGING:
+        if self.call.call_state == SIPCallState.RINGING:
             res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri)
             if send_sip_tcp(self.socket, str(res).encode()):
                 res.status_code = SIPStatusCode.REQUEST_TERMINATED
                 if send_sip_tcp(self.socket, str(res).encode()):
-                    self.call_state = SIPCallState.TRYING_CANCEL
+                    self.call.call_state = SIPCallState.TRYING_CANCEL
 
     def process_ack(self, msg):
-        """
-        Handle an incoming ACK request
-
-        :param msg: the ACK SIP message
-        :type msg: SIPRequest
-        """
-        if self.call_state == SIPCallState.TRYING_CANCEL:
-            # Cancel completed, clear call
+        if self.call.call_state == SIPCallState.TRYING_CANCEL:
             self.clear_call()
         else:
-            # Normal ACK handling here
-            print("starting stream - receiver")
             self.controller.start_stream()
 
+    def process_bye(self, msg):
+        res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri)
+        send_sip_tcp(self.socket, str(res).encode())
+        self.clear_call()
+
+    def send_auth_response(self, msg):
+        print("auth")
+        method = SIPMethod.INVITE if self.call.call_type == SIPCallType.INVITE else SIPMethod.REGISTER
+        cseq = msg.get_header('cseq')[0] + 1
+        self.call.last_used_cseq_num += 1
+        fields = self._parse_auth_request(msg.get_header('www-authenticate'))
+
+        if fields['algorithm'] != 'md5':
+            self.clear_call()
+            return
+
+        response = self.auth_authority.calculate_hash_auth(
+            self.password, method.value, fields['nonce'], fields['realm'])
+
+        auth_header = f'digest username="{self.uri}", realm="{fields["realm"]}", ' \
+                      f'nonce="{fields["nonce"]}", response="{response}"'
+
+        req = SIPMsgFactory.create_request(method, SIP_VERSION, msg.get_header('from'),
+                                           msg.get_header('to'), self.call.current_call_id, cseq,
+                                           {'www-authenticate': auth_header})
+        send_sip_tcp(self.socket, str(req).encode())
+
     def _parse_auth_request(self, header):
-        """
-        Parse WWW-Authenticate header for Digest authentication
-
-        :param header: the WWW-Authenticate header value
-        :type header: str
-
-        :return: dictionary with parsed auth fields or None
-        :rtype: dict or None
-        """
         if not header or not header.lower().startswith("digest "):
             return None
 
         header = header[7:].strip()
+        pattern = re.compile(r'(\w+)=([\"\']?)([^\"\',]+)\2')
+        parsed = {match[0]: match[2].strip() for match in pattern.findall(header)}
 
-        # Regex for key="value" or key=value (handles both quoted/unquoted)
-        pattern = re.compile(r'(\w+)=("([^"\\]*(\\.[^"\\]*)*)"|[^,]+)')
-        parsed = {}
-
-        for match in pattern.finditer(header):
-            key = match.group(1)
-            raw_value = match.group(3) if match.group(3) is not None else match.group(2)
-            parsed[key] = raw_value.strip().strip('"')
-
-        # Validate required fields for Digest auth (can be expanded if needed)
         required_fields = ['realm', 'nonce', 'algorithm']
         if not all(field in parsed for field in required_fields):
             return None
-
         return parsed
-    def send_auth_response(self, msg):
-        """
-        Send an authentication response to the SIP server
-
-        :param msg: the original SIP message requiring auth
-        :type msg: SIPMessage
-        """
-        print("auth")
-        if self.call_type == SIPCallType.INVITE:
-            method = SIPMethod.INVITE
-        else:
-            method = SIPMethod.REGISTER
-
-        cseq = msg.get_header('cseq')[0] + 1
-        fields = self._parse_auth_request(msg.get_header('www-authenticate'))
-        algo = fields['algorithm']
-        nonce = fields['nonce']
-        realm = fields['realm']
-        if algo != 'md5':
-            # not valid
-            self.clear_call()
-        else:
-            ha1 = self.auth_authority._calculate_ha1(self.uri, self.password, realm)
-            response = self.auth_authority.calculate_hash_auth(self.password, method.value, nonce, realm)
-
-            auth_header = f'digest username="{self.uri}", realm="{realm}", nonce="{nonce}", response="{response}"'
-
-            req = SIPMsgFactory.create_request(method,
-                                           SIP_VERSION,
-                                           msg.get_header('from'),
-                                           msg.get_header('to'),
-                                           self.current_call_id,
-                                           cseq,
-                                               {'www-authenticate': auth_header})
-
-
-
-            send_sip_tcp(self.socket, str(req).encode())
 
     def process_response(self, msg):
         """
@@ -320,117 +220,144 @@ class SIPHandler(ControllerAware):
         :param msg: the SIP response message
         :type msg: SIPResponse
         """
-        # Process responses for current call if needed
-        if self.call_state == SIPCallState.WAITING_AUTH and msg.status_code == SIPStatusCode.UNAUTHORIZED:
-            # we need to send auth response
+        status = msg.status_code
+
+        # Authentication handling
+        if self.call.call_state == SIPCallState.WAITING_AUTH and status == SIPStatusCode.UNAUTHORIZED:
             self.send_auth_response(msg)
-        elif msg.status_code == SIPStatusCode.DOES_NOT_EXIST_ANYWHERE:
-            # the call was terminated in the server
+            return
+
+        # Call rejected or registration failed
+        if status == SIPStatusCode.DOES_NOT_EXIST_ANYWHERE:
             self.clear_call()
-        elif self.call_type == SIPCallType.REGISTER:
-              if msg.status_code == SIPStatusCode.OK:
-                # register was successful
+            return
+
+        # Handle REGISTER responses
+        if self.call.call_type == SIPCallType.REGISTER:
+            if status == SIPStatusCode.OK:
                 self.clear_call()
-        elif self.call_type == SIPCallType.INVITE:
-            if self.call_state is None and msg.status_code == SIPStatusCode.TRYING:
-                self.call_state = SIPCallState.TRYING
-            elif self.call_state == SIPCallState.TRYING and msg.status_code == SIPStatusCode.RINGING:
+            else:
+                self.controller.response_for_login(status.value)
+            return
+
+        # Handle INVITE responses
+        if self.call.call_type == SIPCallType.INVITE:
+            if self.call.call_state is None and status == SIPStatusCode.TRYING:
+                self.call.call_state = SIPCallState.TRYING
+
+            elif self.call.call_state == SIPCallState.TRYING and status == SIPStatusCode.RINGING:
                 print("ringing")
-                self.call_state = SIPCallState.RINGING
+                self.call.call_state = SIPCallState.RINGING
 
-            elif self.call_state == SIPCallState.RINGING and msg.status_code == SIPStatusCode.DECLINE:
-                self.clear_call() # the uac declined
-            elif self.call_state == SIPCallState.RINGING and msg.status_code == SIPStatusCode.OK:
-                print("okay")
-                # parse sdp
-                sdp_recv = SDP.parse(msg.body)
-                print("recvd")
-                print(sdp_recv)
-                if sdp_recv:
-                    self.controller.set_remote_ip(sdp_recv.ip)
+            elif self.call.call_state == SIPCallState.RINGING:
+                if status == SIPStatusCode.DECLINE:
+                    self.clear_call()
+                elif status == SIPStatusCode.OK:
+                    print("okay")
+                    sdp_recv = SDP.parse(msg.body)
+                    print("recvd")
+                    print(sdp_recv)
+                    if sdp_recv:
+                        self.controller.set_remote_ip(sdp_recv.ip)
+                        if sdp_recv.audio_port:
+                            self.controller.set_send_audio(sdp_recv.audio_port)
+                        if sdp_recv.video_port:
+                            self.controller.set_send_video(sdp_recv.video_port)
 
-                    if sdp_recv.audio_port:
-                        self.controller.set_send_audio(sdp_recv.audio_port)
-                    if sdp_recv.video_port:
-                        self.controller.set_send_video(sdp_recv.video_port)
+                        cseq = msg.get_header('cseq')[0] + 1
+                        self.call.last_used_cseq_num = cseq
+                        ack = SIPMsgFactory.create_request(
+                            SIPMethod.ACK,
+                            SIP_VERSION,
+                            msg.get_header('from'),
+                            self.uri,
+                            self.call.current_call_id,
+                            cseq
+                        )
 
-                    ack_request = SIPMsgFactory.create_request(
-                        SIPMethod.ACK,
-                        SIP_VERSION,
-                        msg.get_header('from'),
-                        self.uri,
-                        self.current_call_id,
-                        msg.get_header('cseq')[0] + 1
-                    )
-                    print(f"acking: {ack_request}")
-                    if send_sip_tcp(self.socket, str(ack_request).encode()):
-                        self.call_state = SIPCallState.IN_CALL
-                        # start rtp call
-                        print("start stream - send")
-                        self.controller.start_stream()
 
-            # cancel responses
-            elif self.call_state == SIPCallState.INIT_CANCEL and msg.status_code == SIPStatusCode.OK:
-                self.call_type = SIPCallState.TRYING_CANCEL
-            elif self.call_state == SIPCallState.TRYING and msg.status_code == SIPStatusCode.REQUEST_TERMINATED:
-                # send ack to the server for the cancel
-                cseq = msg.get_header('cseq')[0]+1
-                res = SIPMsgFactory.create_request(SIPMethod.ACK, SIP_VERSION, SERVER_URI, self.uri, self.current_call_id, cseq=cseq)
-                send_sip_tcp(self.socket, str(res).encode())
-                self.clear_call()
+                        print(f"acking: {ack}")
+                        if send_sip_tcp(self.socket, str(ack).encode()):
+                            self.call_state = SIPCallState.IN_CALL
+                            print("start stream - send")
+                            self.controller.start_stream()
+            return
 
+        # Handle CANCEL responses
+        if self.call.call_state == SIPCallState.INIT_CANCEL and status == SIPStatusCode.OK:
+            self.call.call_state = SIPCallState.TRYING_CANCEL
+
+        elif self.call.call_state == SIPCallState.TRYING and status == SIPStatusCode.REQUEST_TERMINATED:
+            cseq = msg.get_header('cseq')[0] + 1
+            self.call.last_used_cseq_num = cseq
+            ack = SIPMsgFactory.create_request(
+                SIPMethod.ACK,
+                SIP_VERSION,
+                SERVER_URI,
+                self.uri,
+                self.call.current_call_id,
+                cseq
+            )
+            send_sip_tcp(self.socket, str(ack).encode())
+            self.clear_call()
 
     def register(self):
-        """
-        Register this user with the SIP server
-        :returns: none
-        """
-        req = SIPMsgFactory.create_request(SIPMethod.REGISTER, SIP_VERSION, SERVER_URI, self.uri, "1233", 1)
-        self.current_call_id = "1233"
-        self.call_type = SIPCallType.REGISTER
-        self.call_state = SIPCallState.WAITING_AUTH
+
+        self.call = Call(
+            call_type=SIPCallType.REGISTER,
+            call_id=generate_random_call_id(),
+            remote_uri=SERVER_URI,
+            call_state=SIPCallState.WAITING_AUTH,
+            last_used_cseq_num=1
+        )
+
+        req = SIPMsgFactory.create_request(SIPMethod.REGISTER, SIP_VERSION, SERVER_URI, self.uri, self.call.call_id, self.call.last_used_cseq_num)
         send_sip_tcp(self.socket, str(req).encode())
 
     def invite(self, uri):
-        """
-        Initiate an INVITE (call) to another SIP URI
 
-        :param uri: the destination SIP URI
-        :type uri: str
-        """
-        call_id = generate_random_call_id()
+        self.call = Call(
+            call_type=SIPCallType.INVITE,
+            call_id=generate_random_call_id(),
+            remote_uri=uri,
+            call_state=SIPCallState.WAITING_AUTH,
+            last_used_cseq_num=1
+        )
+
         session_id = SDP.generate_session_id()
 
-        self.controller.set_recv_ports(video=True, audio=True) # will change to add gui events
+        self.controller.set_recv_ports(video=True, audio=True)
         sdp_body = SDP(0, '127.0.0.1', session_id,
-                       video_port=self.controller.get_recv_video_port(), video_format='h.264', # maybe not(?)
-                       audio_port=self.controller.get_recv_audio_port(), audio_format='acc' # not the real format
-                       )
+                       video_port=self.controller.get_recv_video_port(), video_format='h.264',
+                       audio_port=self.controller.get_recv_audio_port(), audio_format='acc')
 
-        req = SIPMsgFactory.create_request(SIPMethod.INVITE, SIP_VERSION, uri, self.uri, call_id, 1, body=str(sdp_body))
-        print("inviting")
-        print(req)
-        self.current_call_id = call_id
-        self.call_type = SIPCallType.INVITE
+        req = SIPMsgFactory.create_request(SIPMethod.INVITE, SIP_VERSION, uri, self.uri, self.call.call_id, self.call.last_used_cseq_num, body=str(sdp_body))
         send_sip_tcp(self.socket, str(req).encode())
 
+    def bye(self):
+        self.call.last_used_cseq_num += 1
+        req = SIPMsgFactory.create_request(SIPMethod.BYE,
+                                           SIP_VERSION,
+                                           self.call.remote_uri,
+                                           self.uri,
+                                           self.call.call_id,
+                                           self.call.last_used_cseq_num)
+        self.call.call_state = SIPCallState.WAITING_BYE
+        send_sip_tcp(self.socket, str(req).encode())
+
+    def cancel(self):
+        self.call.last_used_cseq_num += 1
+        req = SIPMsgFactory.create_request(SIPMethod.CANCEL,
+                                           SIP_VERSION,
+                                           self.call.remote_uri,
+                                           self.uri,
+                                           self.call.call_id,
+                                           self.call.last_used_cseq_num)
+        self.call.call_state = SIPCallState.INIT_CANCEL
+        send_sip_tcp(self.socket, str(req).encode())
 
     def clear_call(self):
-        """
-        Clear the current call state and reset call-related data
-        :returns: none
-        """
-        print(f"Terminating call {self.current_call_id}")
-        self.current_call_id = None
-        self.call_type = None
-        self.call_state = None
-        # self.controller.clear_rtp_ports()
-
-
-
-# hand = SIPHandler('user1', 'qwe')
-# hand.connect()
-# hand.start()
-# hand.register()
-# time.sleep(5)
-# hand.invite("user2")
+        print(f"Terminating call {self.call.current_call_id}")
+        self.call = None
+        self.lingering_data = None
+        self.controller.clear_rtp_ports()

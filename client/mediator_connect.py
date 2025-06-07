@@ -47,14 +47,25 @@ class MediatorInterface(ABC):
             """
             pass
 
-        # @abstractmethod
-        # def get_recv_audio_port(self):
-        #
-        #     pass
-        #
-        # @abstractmethod
-        # def get_recv_video_port(self):
-        #     pass
+        @abstractmethod
+        def get_recv_audio_port(self):
+            """
+            get the local audio port
+
+            :returns: the recv audio port
+            :rtype: int
+            """
+            pass
+
+        @abstractmethod
+        def get_recv_video_port(self):
+            """
+                get the local video port
+
+                :returns: the recv video port
+                :rtype: int
+                """
+            pass
 
         @abstractmethod
         def clear_rtp_ports(self):
@@ -64,6 +75,26 @@ class MediatorInterface(ABC):
             :returns: none
             """
             pass
+
+        # sip client -> all
+        @abstractmethod
+        def start_stream(self):
+            """
+            Start audio and video streaming.
+
+            :returns: none
+            """
+            pass
+
+        @abstractmethod
+        def stop_stream(self):
+            """
+            Stop the RTP audio and video streaming.
+
+            :returns: none
+            """
+            pass
+
 
         # sip -> gui
         @abstractmethod
@@ -81,34 +112,26 @@ class MediatorInterface(ABC):
             """
             Notify GUI whether login was successful.
 
-            :param success: login result
-            :type success: bool
+            :param success: login result - if nothing success if not error msg
+            :type success: string
             """
-            pass# tell gui whether login was successful
+            pass
+            # tell gui whether login was successful
+        def response_for_signup(self, success):
+            """
+            Notify GUI whether signup was successful.
+
+            :param success: signup result - if nothing success if not error msg
+            :type success: string
+            """
+            pass
 
         # not necessary in my code
         # @abstractmethod
         # def notify_cancel(self): pass # notify the request has been canceled
 
 
-        # sip client -> all
-        @abstractmethod
-        def start_stream(self):
-            """
-            Start audio and video streaming.
 
-            :returns: none
-            """
-            pass
-
-        @abstractmethod
-        def stop_rtp_stream(self):
-            """
-            Stop the RTP audio and video streaming.
-
-            :returns: none
-            """
-            pass
 
         # define gui -> rtp_manager
         @abstractmethod
@@ -141,7 +164,15 @@ class MediatorInterface(ABC):
             """
             pass # send bye request
 
+        @abstractmethod
+        def call(self, uri):
+            """
+            Initiate a call to the given SIP URI.
 
+            :param uri: SIP URI to call
+            :type uri: str
+            """
+            pass # send invite request
         # gui -> sip
         @abstractmethod
         def answer_call(self, answer):
@@ -166,15 +197,7 @@ class MediatorInterface(ABC):
             """
             pass # send register request
 
-        @abstractmethod
-        def call(self, uri):
-            """
-            Initiate a call to the given SIP URI.
 
-            :param uri: SIP URI to call
-            :type uri: str
-            """
-            pass # send invite request
 
 class ControllerAware(ABC):
     def __init__(self):

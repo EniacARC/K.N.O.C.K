@@ -73,14 +73,14 @@ class AppController(ControllerAware):
         self.view.start_mainloop()
 
     # mediator is called from another thread. we need tp update in a thread safe way
-    def switch_screen_mediator(self, screen_name):
+    def trigger_function_mediator(self, func):
         """
         Switch screen from a different thread using thread-safe call.
 
-        :param screen_name: name of the screen to switch to
-        :type screen_name: str
+        :param func: callback function to trigger in a thread safe way
+        :type func: function
 
         :returns: none
         """
-        self.view.root.after(0, lambda: self.show_screen(screen_name))
+        self.view.root.after(0, func)
 
