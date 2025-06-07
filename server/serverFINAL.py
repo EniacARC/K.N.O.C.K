@@ -205,8 +205,8 @@ class SIPServer:
 
         # for ip block (dos stop)
         self.blacklist_ips = set()
-        self.connection_threshold = 50  # max attempts
-        self.time_window = 60  # seconds
+        self.connection_threshold = 5  # max attempts
+        self.time_window = 10  # seconds
         self.max_connected = 1000
 
         # msg rate limiter for ddos
@@ -247,6 +247,7 @@ class SIPServer:
                         client_sock, addr = self.server_socket.accept()
                         client_ip = addr[0]
                         if client_ip in self.blacklist_ips or len(self.connected_users) >= self.max_connected:
+                            print("blacklisted")
                             client_sock.close()
                             continue
                         # sliding window
@@ -256,6 +257,7 @@ class SIPServer:
                                 t for t in self.ip_connection_counts[client_ip] if now - t < self.time_window
                             ]
                             self.ip_connection_counts[client_ip].append(now)
+                            print(f"{len(self.ip_connection_counts[client_ip])} for timeframe")
 
                             if len(self.ip_connection_counts[client_ip]) > self.connection_threshold:
                                 print(f"Blacklisting IP {client_ip} for excessive connections.")
@@ -299,6 +301,8 @@ class SIPServer:
             with self.conn_lock:
                 while self.connected_users:
                     self.connected_users.pop().close()
+            print("ending1")
+            self._save_banned_ip()
             self.server_socket.close()
 
     def _load_banned_ips(self):
@@ -327,8 +331,10 @@ class SIPServer:
         the BANNED_IPS_FILE, one per line. It overwrites any existing entries
         with the current set of known banned IPs.
         """
-        with open(BANNED_IPS_FILE, "a") as f:
+        print("ending")
+        with open(BANNED_IPS_FILE, "w") as f:
             for ip in self.blacklist_ips:
+                print(ip)
                 f.write(ip + "\n")
 
     def _worker_process_msg(self, sock, msg):
