@@ -33,9 +33,9 @@ class LoginController(BaseController):
             self.model.password = password
             self.app.mediator.signin(username, password)
 
-    def sign_in_answer(self, success, error_msg=None):
-        if success:
+    def sign_in_answer(self, success):
+        if success == '':
             self.app.show_screen("make call")
         else:
             # Show error with return screen "signin"
-            self.app.display_error("error login msg", "login") # sets the controller msg and return func then displays
+            self.app.display_error(success, "login") # sets the controller msg and return func then displays

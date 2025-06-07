@@ -13,6 +13,18 @@ from .video_capture import VideoInput, VideoEncoder, VideoDecoder
 
 
 def _send_audio_process(send_ip, send_audio, running_event):
+    """
+       Audio sending process function that reads audio data from input and sends RTP packets.
+
+       :param send_ip: The IP address to send audio packets to
+       :type send_ip: str
+       :param send_audio: The UDP port to send audio packets to
+       :type send_audio: int
+       :param running_event: A multiprocessing.Event controlling the process lifetime
+       :type running_event: multiprocessing.Event
+
+       :returns: None
+       """
     """Audio sending process function"""
     audio_io = AudioInput()
     sender = RTPHandler(send_ip, send_port=send_audio)
@@ -49,7 +61,22 @@ def _send_audio_process(send_ip, send_audio, running_event):
 
 
 def _recv_audio_process(send_ip, recv_audio, recv_audio_queue, running_event):
-    """Audio receiving process function"""
+    """
+        Audio receiving process function that listens for incoming RTP audio packets
+        and places decoded audio frames into a multiprocessing queue.
+
+        :param send_ip: The IP address to bind for receiving audio
+        :type send_ip: str
+        :param recv_audio: The UDP port to listen for incoming audio packets
+        :type recv_audio: int
+        :param recv_audio_queue: Queue to put received audio frames (timestamp, payload)
+        :type recv_audio_queue: multiprocessing.Queue
+        :param running_event: A multiprocessing.Event controlling the process lifetime
+        :type running_event: multiprocessing.Event
+
+        :returns: None
+        """
+
     receiver = RTPHandler(send_ip, listen_port=recv_audio)
     receiver.start()
 
@@ -67,7 +94,19 @@ def _recv_audio_process(send_ip, recv_audio, recv_audio_queue, running_event):
 
 
 def _send_video_process(send_ip, send_video, running_event):
-    """Video sending process function"""
+    """
+    Video sending process function that reads video frames, encodes them,
+    and sends RTP packets at a capped frame rate (30 FPS).
+
+    :param send_ip: The IP address to send video packets to
+    :type send_ip: str
+    :param send_video: The UDP port to send video packets to
+    :type send_video: int
+    :param running_event: A multiprocessing.Event controlling the process lifetime
+    :type running_event: multiprocessing.Event
+
+    :returns: None
+    """
     video_io = VideoInput()
     encoder = VideoEncoder()
 
@@ -96,7 +135,21 @@ def _send_video_process(send_ip, send_video, running_event):
 
 
 def _recv_video_process(send_ip, recv_video, recv_video_queue, running_event):
-    """Video receiving process function"""
+    """
+    Video receiving process function that listens for incoming RTP video packets,
+    decodes them, and places decoded frames into a multiprocessing queue.
+
+    :param send_ip: The IP address to bind for receiving video
+    :type send_ip: str
+    :param recv_video: The UDP port to listen for incoming video packets
+    :type recv_video: int
+    :param recv_video_queue: Queue to put received video frames (timestamp, frame as ndarray)
+    :type recv_video_queue: multiprocessing.Queue
+    :param running_event: A multiprocessing.Event controlling the process lifetime
+    :type running_event: multiprocessing.Event
+
+    :returns: None
+    """
     receiver = RTPHandler(send_ip, listen_port=recv_video)
     decoder = VideoDecoder()
     receiver.start()
@@ -139,6 +192,12 @@ class RTPManager(ControllerAware):
         self.recv_video_queue = multiprocessing.Queue()  # (timestamp, frame)
 
     def allocate_port(self):
+        """
+        Allocates a random free UDP port for use.
+
+        :returns: A free port number
+        :rtype: int
+        """
         for _ in range(100):
             port = random.randint(10000, 60000)
             if port not in self.used_ports and self._is_port_free(port):
@@ -147,7 +206,15 @@ class RTPManager(ControllerAware):
         raise RuntimeError("Failed to allocate free port")
 
     def _is_port_free(self, port):
-        """Checks if a port is free by trying to bind a UDP socket."""
+        """
+        Checks if a port is free by trying to bind a UDP socket.
+
+        :param port: The port number to check
+        :type port: int
+
+        :returns: True if the port is free, False otherwise
+        :rtype: bool
+        """
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             try:
                 sock.bind(('0.0.0.0', port))
@@ -156,17 +223,43 @@ class RTPManager(ControllerAware):
                 return False
 
     def set_ip(self, ip):
+        """
+        Sets the target IP address for sending RTP streams.
+
+        :param ip: The destination IP address
+        :type ip: str
+        """
         self.send_ip = ip
 
     def set_send_audio(self, audio):
+        """
+        Sets the port used to send audio RTP packets.
+
+        :param audio: The port number for audio sending
+        :type audio: int
+        """
         if self.send_ip:
             self.send_audio = audio
 
     def set_send_video(self, video):
+        """
+        Sets the port used to send video RTP packets.
+
+        :param video: The port number for video sending
+        :type video: int
+        """
         if self.send_ip:
             self.send_video = video
 
     def set_recv_ports(self, video=False, audio=False):
+        """
+        Allocates ports for receiving audio and/or video.
+
+        :param video: Whether to allocate a video port
+        :type video: bool
+        :param audio: Whether to allocate an audio port
+        :type audio: bool
+        """
         if audio:
             self.recv_audio = self.allocate_port()
             print(self.recv_audio)
@@ -174,12 +267,29 @@ class RTPManager(ControllerAware):
             self.recv_video = self.allocate_port()
 
     def get_recv_audio(self):
+        """
+        Gets the allocated port for receiving audio.
+
+        :returns: The audio receiving port
+        :rtype: int
+        """
         return self.recv_audio
 
     def get_recv_video(self):
+        """
+        Gets the allocated port for receiving video.
+
+        :returns: The video receiving port
+        :rtype: int
+        """
         return self.recv_video
 
     def clear_ports(self):
+        """
+        Resets and clears all port assignments and process references.
+
+        :returns: None
+        """
         self.used_ports = []
         self.processes = []
         self.running_event = None
@@ -190,6 +300,11 @@ class RTPManager(ControllerAware):
         self.recv_video = None
 
     def start_rtp_comms(self):
+        """
+        Starts all configured RTP sender and receiver processes.
+
+        :returns: None
+        """
         self.running_event = multiprocessing.Event()
         self.running_event.set()
 
@@ -229,18 +344,35 @@ class RTPManager(ControllerAware):
             process.start()
 
     def get_next_audio_frame(self):
+        """
+        Retrieves the next audio frame from the receiving queue.
+
+        :returns: A tuple of (timestamp, audio_data) or None if queue is empty
+        :rtype: tuple or None
+        """
         try:
             return self.recv_audio_queue.get_nowait()  # Non-blocking
         except queue.Empty:
             return None
 
     def get_next_video_frame(self):
+        """
+        Retrieves the next video frame from the receiving queue.
+
+        :returns: A tuple of (timestamp, video_frame) or None if queue is empty
+        :rtype: tuple or None
+        """
         try:
             return self.recv_video_queue.get_nowait()  # Non-blocking
         except queue.Empty:
             return None
 
     def stop(self):
+        """
+        Stops all running RTP processes and clears configuration.
+
+        :returns: None
+        """
         if self.running_event:
             self.running_event.clear()
 
@@ -254,6 +386,12 @@ class RTPManager(ControllerAware):
         self.clear_ports()
 
     def __str__(self):
+        """
+        Returns a human-readable string representation of RTPManager state.
+
+        :returns: A status string
+        :rtype: str
+        """
         running_processes = sum(1 for p in self.processes if p.is_alive()) if self.processes else 0
         return (
             f"RTPManager Status:\n"
@@ -270,5 +408,9 @@ class RTPManager(ControllerAware):
         )
 
     def __del__(self):
-        """Cleanup processes on object destruction"""
+        """
+        Ensures all resources are cleaned up when the object is deleted.
+
+        :returns: None
+        """
         self.stop()

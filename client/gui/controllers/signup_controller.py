@@ -23,9 +23,9 @@ class SignupController(BaseController):
             self.model.password = password
             self.app.mediator.signup(username, password)
 
-    def signup_answer(self, success, error_msg=None):
-        if success:
+    def signup_answer(self, success):
+        if success == '':
             self.app.show_screen("login")
         else:
             # Show error with return screen "signup"
-            self.app.display_error("error msg", "signup") # sets the controller msg and return func then displays
+            self.app.display_error(success, "signup") # sets the controller msg and return func then displays

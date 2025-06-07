@@ -104,31 +104,76 @@ def generate_random_call_id():
 
 class SIPMsg(ABC):
     def __init__(self):
+        """
+        Base initializer for SIPMsg. Sets default values for headers and body.
+        """
         self.version = None
         self.headers = {}  # {'to': '', 'from': '', 'call-id': '', 'cseq': (0, ''), 'content-length': 0}
         self.body = None
 
     @abstractmethod
     def _can_parse_start_line(self, start_line):
+        """
+        Checks if the given start line can be parsed by the specific SIP message type.
+
+        :param start_line: The start line of the SIP message.
+        :type start_line: str
+        """
         pass
 
     @abstractmethod
     def _parse_start_line(self, start_line):
+        """
+        Parses the start line and extracts its components into internal fields.
+
+        :param start_line: The start line of the SIP message.
+        :type start_line: str
+        """
         pass
 
     @abstractmethod
     def _build_start_line(self):
+        """
+        Constructs the SIP start line from internal fields.
+
+        :return: The formatted start line for the SIP message.
+        :rtype: str
+        """
         pass
 
     @abstractmethod
     def can_build(self):
+        """
+    Checks whether the SIP message has all required components to be built.
+
+    :return: True if the message can be built, otherwise False.
+    :rtype: bool
+    """
         pass
 
     @staticmethod
     def is_request(msg):
+        """
+        Determines whether a SIP message is a request (not a response).
+
+        :param msg: The SIP message string.
+        :type msg: str
+
+        :return: True if it is a request, False if it's a response.
+        :rtype: bool
+        """
         return not bool(re.match(r"^SIP", msg))
 
     def can_parse(self, msg):
+        """
+        Validates whether the SIP message string can be parsed based on syntax and required headers.
+
+        :param msg: The SIP message string to validate.
+        :type msg: str
+
+        :return: True if the message is syntactically valid and can be parsed, otherwise False.
+        :rtype: bool
+        """
         try:
             """checks validity not logic (if headers match what they need"""
             if re.match(SIP_MSG_PATTERN, msg):
@@ -153,6 +198,9 @@ class SIPMsg(ABC):
         return False
 
     def _strip_essential_headers(self):
+        """
+        Normalizes and transforms key SIP headers into structured internal format.
+        """
         # transform <sip:uri> to uri
         if 'to' in self.headers:
             self.headers['to'] = self.headers['to'][1:-1].removeprefix("sip:")
@@ -169,6 +217,12 @@ class SIPMsg(ABC):
             self.headers['content-length'] = int(self.headers['content-length'])
 
     def _build_headers(self):
+        """
+        Prepares SIP headers for message construction by transforming internal format to string values.
+
+        :return: A copy of the headers dictionary formatted for message building, or False if formatting fails.
+        :rtype: dict | bool
+        """
         # there is some error here!
         headers_copy = copy.deepcopy(self.headers)
 
@@ -193,6 +247,15 @@ class SIPMsg(ABC):
             return False
 
     def parse(self, msg):
+        """
+        Parses a SIP message string into structured components including start line, headers, and body.
+
+        :param msg: The SIP message string to parse.
+        :type msg: str
+
+        :return: True if parsing succeeded, otherwise False.
+        :rtype: bool
+        """
         if self.can_parse(msg):
             headers_part, self.body = msg.split("\r\n\r\n", 1)
             lines = headers_part.split("\r\n")
@@ -204,6 +267,12 @@ class SIPMsg(ABC):
             return False
 
     def __str__(self):
+        """
+        Builds the SIP message string from internal components if possible.
+
+        :return: The full SIP message string, or an empty string if build fails.
+        :rtype: str | None
+        """
         if not self.can_build():
             print("cannot build")
             return ""
@@ -220,19 +289,48 @@ class SIPMsg(ABC):
 
     # manage headers/body
     def set_header(self, key, value):
+        """
+        Sets or updates a SIP header field.
+
+        :param key: The name of the header.
+        :type key: str
+
+        :param value: The value to assign to the header.
+        :type value: Any
+        """
         if key and value:
             self.headers[key] = value
 
     def delete_header(self, key):
+        """
+        Deletes a specific SIP header if it exists.
+
+        :param key: The name of the header to delete.
+        :type key: str
+        """
         if key in self.headers:
             del self.headers[key]
 
     def get_header(self, key):
+        """
+        Retrieves the value of a SIP header if it exists.
+
+        :param key: The name of the header.
+        :type key: str
+
+        :return: The header value if found, otherwise None.
+        """
         if key in self.headers:
             return self.headers[key]
         return None
 
     def set_body(self, body):
+        """
+        Sets the SIP message body and updates the content-length header accordingly.
+
+        :param body: The body content of the SIP message.
+        :type body: str
+        """
         self.body = body
         self.headers['content-length'] = len(body)
 
@@ -295,6 +393,15 @@ class SIPResponse(SIPMsg):
 class SIPMsgFactory:
     @staticmethod
     def parse(raw_msg):
+        """
+        Parses a raw SIP message and returns the appropriate SIP object (request or response).
+
+        :param raw_msg: The raw SIP message as a string.
+        :type raw_msg: str
+
+        :return: Parsed SIPRequest or SIPResponse object if valid, otherwise None.
+        :rtype: Union[SIPRequest, SIPResponse, None]
+        """
         if SIPMsg.is_request(raw_msg):
             req_object = SIPRequest()
             if req_object.parse(raw_msg):
@@ -308,6 +415,36 @@ class SIPMsgFactory:
 
     @staticmethod
     def create_request(method, version, to_uri, from_uri, call_id, cseq, additional_headers=None, body=None):
+        """
+               Creates a SIPRequest object with the specified parameters.
+
+               :param method: The SIP method (e.g., INVITE, BYE).
+               :type method: SIPMethod
+
+               :param version: SIP version (e.g., "SIP/2.0").
+               :type version: str
+
+               :param to_uri: The destination URI.
+               :type to_uri: str
+
+               :param from_uri: The source URI.
+               :type from_uri: str
+
+               :param call_id: Unique identifier for the SIP session.
+               :type call_id: str
+
+               :param cseq: CSeq number of the request.
+               :type cseq: int
+
+               :param additional_headers: Optional additional SIP headers.
+               :type additional_headers: dict or None
+
+               :param body: Optional SIP message body.
+               :type body: str or None
+
+               :return: Configured SIPRequest object.
+               :rtype: SIPRequest
+               """
         req_object = SIPRequest()
         req_object.method = method.value
         req_object.uri = to_uri
@@ -329,6 +466,27 @@ class SIPMsgFactory:
 
     @staticmethod
     def create_response_from_request(request, status_code, from_uri, additional_headers=None, body=None):
+        """
+                Creates a SIPResponse object based on a given SIPRequest.
+
+                :param request: The original SIPRequest to respond to.
+                :type request: SIPRequest
+
+                :param status_code: The response status code (e.g., 200, 404).
+                :type status_code: int
+
+                :param from_uri: The URI of the responder.
+                :type from_uri: str
+
+                :param additional_headers: Optional additional SIP headers.
+                :type additional_headers: dict or None
+
+                :param body: Optional SIP message body.
+                :type body: str or None
+
+                :return: Configured SIPResponse object.
+                :rtype: SIPResponse
+                """
         res_object = SIPResponse()
         res_object.status_code = status_code
         if additional_headers:
@@ -351,6 +509,36 @@ class SIPMsgFactory:
 
     @staticmethod
     def create_response(status_code, version, method, cseq, to_uri, from_uri, call_id, additional_headers=None):
+        """
+        Creates a standalone SIPResponse object with specified parameters.
+
+        :param status_code: The response status code.
+        :type status_code: int
+
+        :param version: SIP version (e.g., "SIP/2.0").
+        :type version: str
+
+        :param method: SIP method for the CSeq header.
+        :type method: SIPMethod
+
+        :param cseq: CSeq number.
+        :type cseq: int
+
+        :param to_uri: Destination URI.
+        :type to_uri: str
+
+        :param from_uri: Source URI.
+        :type from_uri: str
+
+        :param call_id: Unique call identifier.
+        :type call_id: str
+
+        :param additional_headers: Optional additional SIP headers.
+        :type additional_headers: dict or None
+
+        :return: Configured SIPResponse object.
+        :rtype: SIPResponse
+        """
         res_object = SIPResponse()
         res_object.status_code = status_code
         if additional_headers:

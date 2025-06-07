@@ -4,11 +4,14 @@ import sqlite3
 import string
 from typing import Optional
 
+NUM_OF_AQ = 5
+LOCK = Semaphore(NUM_OF_AQ)
+
 class UserDatabase:
     def __init__(self, db_path: str = "users.db"):
         self.db_path = db_path
-        self.num_of_aqs = 5
-        self.lock = Semaphore(self.num_of_aqs)
+        self.num_of_aqs = NUM_OF_AQ
+        self.lock = LOCK
         self._create_table()
 
     def is_valid_username(self, username: str) -> bool:
@@ -84,10 +87,13 @@ class UserDatabase:
         """
         return_val = False
         self.lock.acquire()
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM users WHERE username = ?", (username,))
-            return_val = cursor.fetchone() is not None
+        print(f"username: {username}")
+        if self.is_valid_username(username):
+            print("valid")
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1 FROM users WHERE username = ?", (username,))
+                return_val = cursor.fetchone() is not None
         self.lock.release()
         return return_val
 
@@ -104,10 +110,11 @@ class UserDatabase:
         with self.lock:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT username FROM users")
-                return [row[0] for row in cursor.fetchall()]
+                cursor.execute("SELECT username FROM users WHERE username = 'user1'")
+                return [row for row in cursor.fetchone()]
 
 
 if __name__ == '__main__':
     my_db = UserDatabase()
-    print(my_db.add_user('user6', '122345453'))
+    # print(my_db.add_user('user6', '122345453'))
+    print(my_db.user_exists('user1'))
