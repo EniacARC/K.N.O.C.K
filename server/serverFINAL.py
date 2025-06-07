@@ -178,7 +178,7 @@ class SIPServer:
             thread_name_prefix="sip_worker"
         )
 
-        self.user_db = UserDatabase()
+        self.user_db = UserDatabase('../utils/users.db')
         self.authority = AuthService(SERVER_URI)
 
         # Locks - RLock for multiple acquisitions in the same thread
@@ -662,10 +662,12 @@ class SIPServer:
             return
 
         if not self.user_db.user_exists(uri):
+            print("error")
             # register is to the server only
             error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_FOUND, SERVER_URI)
             self._send_to_client(sock, str(error_msg).encode())
             return
+        print("user exists")
 
         with self.call_lock:
             # verify call details are the ok
@@ -673,6 +675,8 @@ class SIPServer:
             if call_id in self.active_calls:
                 call = self.active_calls[call_id]
                 if cseq != call.last_used_cseq_num + 1 or call.uri != uri or call.call_type != SIPCallType.REGISTER or sock is not call.caller_socket:
+                    print(cseq)
+                    print(call.last_used_cseq_num + 1)
                     print("not standart call")
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
@@ -843,7 +847,7 @@ class SIPServer:
             self.pending_auth[call_id] = challenge
         print("created")
 
-        auth_header = f'digest realm="{SERVER_URI}", nonce="{nonce}, algorithm=MD5'
+        auth_header = f'digest realm="{SERVER_URI}", nonce="{nonce}", algorithm=MD5'
         # Create challenge response
         response = SIPMsgFactory.create_response_from_request(request, SIPStatusCode.UNAUTHORIZED,
                                                               SERVER_URI, {"www-authenticate": auth_header})

@@ -75,7 +75,7 @@ class SIPHandler(ControllerAware):
 
                 if isinstance(msg, SIPRequest):
                     self._handle_request(msg)
-                elif msg.get_header('call-id') == self.call.current_call_id:
+                elif msg.get_header('call-id') == self.call.call_id:
                     self.process_response(msg)
 
     def _handle_request(self, msg):
@@ -85,7 +85,7 @@ class SIPHandler(ControllerAware):
             self._handle_options(msg)
         elif method == SIPMethod.INVITE.value:
             self._handle_invite(msg)
-        elif msg.get_header('call-id') == self.call.current_call_id:
+        elif msg.get_header('call-id') == self.call.call_id:
             self.process_request(msg)
 
     def _handle_options(self, msg):
@@ -181,8 +181,7 @@ class SIPHandler(ControllerAware):
     def send_auth_response(self, msg):
         print("auth")
         method = SIPMethod.INVITE if self.call.call_type == SIPCallType.INVITE else SIPMethod.REGISTER
-        cseq = msg.get_header('cseq')[0] + 1
-        self.call.last_used_cseq_num += 1
+        self.call.last_used_cseq_num = msg.get_header('cseq')[0] + 1
         fields = self._parse_auth_request(msg.get_header('www-authenticate'))
 
         if fields['algorithm'] != 'md5':
@@ -196,7 +195,7 @@ class SIPHandler(ControllerAware):
                       f'nonce="{fields["nonce"]}", response="{response}"'
 
         req = SIPMsgFactory.create_request(method, SIP_VERSION, msg.get_header('from'),
-                                           msg.get_header('to'), self.call.current_call_id, cseq,
+                                           msg.get_header('to'), self.call.call_id, self.call.last_used_cseq_num,
                                            {'www-authenticate': auth_header})
         send_sip_tcp(self.socket, str(req).encode())
 
@@ -312,6 +311,7 @@ class SIPHandler(ControllerAware):
         )
 
         req = SIPMsgFactory.create_request(SIPMethod.REGISTER, SIP_VERSION, SERVER_URI, self.uri, self.call.call_id, self.call.last_used_cseq_num)
+        print(req)
         send_sip_tcp(self.socket, str(req).encode())
 
     def invite(self, uri):
@@ -357,7 +357,14 @@ class SIPHandler(ControllerAware):
         send_sip_tcp(self.socket, str(req).encode())
 
     def clear_call(self):
-        print(f"Terminating call {self.call.current_call_id}")
+        print(f"Terminating call {self.call.call_id}")
         self.call = None
         self.lingering_data = None
         self.controller.clear_rtp_ports()
+
+if __name__ == '__main__':
+    cli = SIPHandler('user1', '3433')
+    cli.connect()
+    cli.start()
+    cli.register()
+
