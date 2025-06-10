@@ -1,5 +1,6 @@
 import socket
 import threading
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -41,6 +42,7 @@ class SIPHandler(ControllerAware):
         # self.call_type = None
         # self.call_state = None
         self.call = None
+        self.logged_in = False
 
         self.auth_authority = AuthService(SERVER_URI)
 
@@ -57,6 +59,7 @@ class SIPHandler(ControllerAware):
 
     def disconnect(self):
         if self.connected:
+            self.connected = False
             self.socket.close()
             print("Disconnected from server")
 
@@ -180,14 +183,14 @@ class SIPHandler(ControllerAware):
 
     def process_ack(self, msg):
         if self.call.call_state == SIPCallState.TRYING_CANCEL:
-            self.clear_call()
+            self.clear_call("call was canceled")
         else:
             self.controller.start_stream()
 
     def process_bye(self, msg):
         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri)
         send_sip_tcp(self.socket, str(res).encode())
-        self.clear_call()
+        self.clear_call("call ended")
 
     def send_auth_response(self, msg):
         print("auth")
@@ -196,7 +199,7 @@ class SIPHandler(ControllerAware):
         fields = self._parse_auth_request(msg.get_header('www-authenticate'))
 
         if fields['algorithm'] != 'md5':
-            self.clear_call()
+            self.clear_call("can't support hash algorithm")
             return
 
         response = self.auth_authority.calculate_hash_auth(
@@ -240,14 +243,16 @@ class SIPHandler(ControllerAware):
 
         # === Rejected or Registration Failure ===
         if status == SIPStatusCode.DOES_NOT_EXIST_ANYWHERE:
-            self.clear_call() # maybe close program (rtp stream...)
+            # technically shows two screens. will try to fix
+            self.clear_call('something went wrong in the call!')
             return
 
         # === REGISTER Handling ===
         if self.call.call_type == SIPCallType.REGISTER:
             if status == SIPStatusCode.OK:
-                self.clear_call()
+                self.logged_in = True
                 self.controller.response_for_login()
+                self.clear_call()
             else:
                 self.controller.response_for_login(status.value[1])
             return
@@ -266,7 +271,7 @@ class SIPHandler(ControllerAware):
 
             if self.call.call_state == SIPCallState.RINGING:
                 if status == SIPStatusCode.DECLINE:
-                    self.clear_call()
+                    self.clear_call(status.value[1])
                 elif status == SIPStatusCode.OK:
                     print("okay")
                     sdp_recv = SDP.parse(msg.body)
@@ -304,7 +309,7 @@ class SIPHandler(ControllerAware):
             self.call.call_state = SIPCallState.TRYING_CANCEL
             return
 
-        if self.call.call_state == SIPCallState.TRYING and status == SIPStatusCode.REQUEST_TERMINATED:
+        if self.call.call_state == SIPCallState.TRYING_CANCEL and status == SIPStatusCode.REQUEST_TERMINATED:
             cseq = msg.get_header('cseq')[0] + 1
             self.call.last_used_cseq_num = cseq
 
@@ -384,11 +389,10 @@ class SIPHandler(ControllerAware):
         self.call.call_state = SIPCallState.INIT_CANCEL
         send_sip_tcp(self.socket, str(req).encode())
 
-    def clear_call(self):
+    def clear_call(self, error_msg=''):
         print(f"Terminating call {self.call.call_id}")
         self.call = None
-        self.lingering_data = None
-        self.controller.clear_rtp_ports()
+        self.controller.clear(error_msg)
 
 # if __name__ == '__main__':
 #     cli = SIPHandler('user1', '3433')

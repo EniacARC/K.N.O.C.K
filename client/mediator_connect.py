@@ -67,15 +67,6 @@ class MediatorInterface(ABC):
                 """
             pass
 
-        @abstractmethod
-        def clear_rtp_ports(self):
-            """
-            Clear or release any allocated RTP ports.
-
-            :returns: none
-            """
-            pass
-
         # sip client -> all
         @abstractmethod
         def start_stream(self):

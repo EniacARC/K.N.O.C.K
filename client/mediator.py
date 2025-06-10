@@ -1,3 +1,5 @@
+from PIL.ImageChops import screen
+
 from client.rtp_logic.rtp_manager import RTPManager
 from client.sip_logic.sip_client import SIPHandler
 from mediator_connect import MediatorInterface
@@ -36,6 +38,11 @@ class Mediator(MediatorInterface):
             self.sip_client.connect()
             self.sip_client.start()
             self.gui.start(screen_name)
+
+    def stop(self):
+        self.gui.stop()
+        self.rtp_manager.stop()
+        self.sip_client.disconnect()
 
     # === SIP -> RTPManager ===
 
@@ -81,12 +88,12 @@ class Mediator(MediatorInterface):
         self._ensure_rtp_manager()
         return self.rtp_manager.get_recv_video()
 
-    def clear_rtp_ports(self):
-        """
-        Clear all RTP ports and reset state.
-        """
-        self._ensure_rtp_manager()
-        self.rtp_manager.clear_ports()
+    # def clear_rtp_ports(self):
+    #     """
+    #     Clear all RTP ports and reset state.
+    #     """
+    #     self._ensure_rtp_manager()
+    #     self.rtp_manager.clear_ports()
 
     # === SIP -> All ===
 
@@ -105,6 +112,25 @@ class Mediator(MediatorInterface):
         self._ensure_rtp_manager()
         self.rtp_manager.stop()
         self._show_gui_screen('make call')
+
+    def clear(self, error_msg):
+        self._ensure_rtp_manager()
+        self.rtp_manager.stop()
+
+        if self.sip_client.logged_in:
+            send_screen = 'make call'
+        else:
+            send_screen = 'login'
+
+        if error_msg == '':
+            # sip doesn't want to display anything to client
+            if self.gui.current_screen != send_screen:
+                self._show_gui_screen(send_screen)
+        else:
+            # sip wants to alernt the client of something
+            self.gui.trigger_function_mediator(
+                lambda: self.gui.display_error(error_msg, send_screen)
+            )
 
     # === SIP -> GUI ===
 

@@ -1,3 +1,5 @@
+from tkinter import messagebox
+
 from .controllers.dial_controller import DialingController
 from .controllers.login_controller import LoginController
 from .controllers.signup_controller import SignupController
@@ -13,6 +15,7 @@ class AppController(ControllerAware):
         super().__init__()
         self.model = model
         self.view = view
+        self.view.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         # Controllers
         self.controllers = {
             "login": LoginController,
@@ -70,6 +73,10 @@ class AppController(ControllerAware):
                 self.model.error.set_error(msg, self.default_screen)
         self.show_screen('error')
 
+    def on_closing(self):
+        if messagebox.askokcancel("Quit", "Do you want to quit?"):
+            self.controller.stop()
+            # self.view.root.quit()
     # mediator funcs
     def start(self, screen_name=''):
         """
@@ -83,6 +90,15 @@ class AppController(ControllerAware):
         else:
             self.show_screen(self.default_screen)
         self.view.start_mainloop()
+
+    def stop(self):
+        # clear references
+        if self.current_screen != "": # if this is not the first screen
+            self.current_controller.on_destroy()
+        self.current_screen = ""
+        self.view.current_view = None
+        self.current_controller = None
+        self.view.root.quit()
 
     # mediator is called from another thread. we need tp update in a thread safe way
     def trigger_function_mediator(self, func):
