@@ -28,7 +28,7 @@ class Call:  # For both invite and register
     call_data: Optional[object] = None
 
 class SIPHandler(ControllerAware):
-    def __init__(self, username, password):
+    def __init__(self, username='None', password='None'):
         super().__init__()
         self.uri = username
         self.password = password
@@ -75,8 +75,11 @@ class SIPHandler(ControllerAware):
 
                 if isinstance(msg, SIPRequest):
                     self._handle_request(msg)
-                elif msg.get_header('call-id') == self.call.call_id:
-                    self.process_response(msg)
+                elif self.call:
+                    if msg.get_header('call-id') == self.call.call_id:
+                        self.process_response(msg)
+                else:
+                    pass # this is for keep alive
 
     def _handle_request(self, msg):
         method = msg.method
@@ -127,14 +130,14 @@ class SIPHandler(ControllerAware):
             self.call.call_state = SIPCallState.WAITING_ACK
             self._handle_call_acceptance()
         else:
-            res = SIPMsgFactory.create_response_from_request(self.lingering_data, SIPStatusCode.DECLINE, self.uri)
+            res = SIPMsgFactory.create_response_from_request(self.call.call_data, SIPStatusCode.DECLINE, self.uri)
             send_sip_tcp(self.socket, str(res).encode())
             self.clear_call()
 
-        self.lingering_data = None
+        self.call.call_data = None
 
     def _handle_call_acceptance(self):
-        sdp_recv = SDP.parse(self.lingering_data.body)
+        sdp_recv = SDP.parse(self.call.call_data.body)
         if not sdp_recv:
             return
 
@@ -151,13 +154,15 @@ class SIPHandler(ControllerAware):
                         audio_port=self.controller.get_recv_audio_port(), audio_format='acc')
 
         res = SIPMsgFactory.create_response_from_request(
-            self.lingering_data, SIPStatusCode.OK, self.uri, body=str(local_sdp))
+            self.call.call_data, SIPStatusCode.OK, self.uri, body=str(local_sdp))
         send_sip_tcp(self.socket, str(res).encode())
 
     def process_invite(self, msg):
         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.RINGING, self.uri)
         if send_sip_tcp(self.socket, str(res).encode()):
             self.call.call_data = msg
+            # send to gui
+            self.controller.ask_for_call_answer(msg.get_header('from'))
 
     def process_cancel(self, msg):
         if self.call.call_state == SIPCallState.RINGING:
@@ -213,42 +218,46 @@ class SIPHandler(ControllerAware):
         return parsed
 
     def process_response(self, msg):
+        print(self.call)
         """
-        Process a SIP response message
+        Process a SIP response message.
 
-        :param msg: the SIP response message
+        :param msg: The SIP response message.
         :type msg: SIPResponse
         """
         status = msg.status_code
 
-        # Authentication handling
+        # === Authentication Handling ===
         if self.call.call_state == SIPCallState.WAITING_AUTH and status == SIPStatusCode.UNAUTHORIZED:
             self.send_auth_response(msg)
             return
 
-        # Call rejected or registration failed
+        # === Rejected or Registration Failure ===
         if status == SIPStatusCode.DOES_NOT_EXIST_ANYWHERE:
-            self.clear_call()
+            self.clear_call() # maybe close program (rtp stream...)
             return
 
-        # Handle REGISTER responses
+        # === REGISTER Handling ===
         if self.call.call_type == SIPCallType.REGISTER:
             if status == SIPStatusCode.OK:
                 self.clear_call()
+                self.controller.response_for_login()
             else:
                 self.controller.response_for_login(status.value)
             return
 
-        # Handle INVITE responses
+        # === INVITE Handling ===
         if self.call.call_type == SIPCallType.INVITE:
-            if self.call.call_state is None and status == SIPStatusCode.TRYING:
+            if self.call.call_state is SIPCallState.WAITING_AUTH and status == SIPStatusCode.TRYING:
                 self.call.call_state = SIPCallState.TRYING
+                return
 
-            elif self.call.call_state == SIPCallState.TRYING and status == SIPStatusCode.RINGING:
+            if self.call.call_state == SIPCallState.TRYING and status == SIPStatusCode.RINGING:
                 print("ringing")
                 self.call.call_state = SIPCallState.RINGING
+                return
 
-            elif self.call.call_state == SIPCallState.RINGING:
+            if self.call.call_state == SIPCallState.RINGING:
                 if status == SIPStatusCode.DECLINE:
                     self.clear_call()
                 elif status == SIPStatusCode.OK:
@@ -256,6 +265,7 @@ class SIPHandler(ControllerAware):
                     sdp_recv = SDP.parse(msg.body)
                     print("recvd")
                     print(sdp_recv)
+
                     if sdp_recv:
                         self.controller.set_remote_ip(sdp_recv.ip)
                         if sdp_recv.audio_port:
@@ -265,40 +275,50 @@ class SIPHandler(ControllerAware):
 
                         cseq = msg.get_header('cseq')[0] + 1
                         self.call.last_used_cseq_num = cseq
+
                         ack = SIPMsgFactory.create_request(
                             SIPMethod.ACK,
                             SIP_VERSION,
                             msg.get_header('from'),
                             self.uri,
-                            self.call.current_call_id,
+                            self.call.call_id,
                             cseq
                         )
-
 
                         print(f"acking: {ack}")
                         if send_sip_tcp(self.socket, str(ack).encode()):
                             self.call_state = SIPCallState.IN_CALL
                             print("start stream - send")
                             self.controller.start_stream()
-            return
+                return
 
-        # Handle CANCEL responses
+        # === CANCEL Handling ===
         if self.call.call_state == SIPCallState.INIT_CANCEL and status == SIPStatusCode.OK:
             self.call.call_state = SIPCallState.TRYING_CANCEL
+            return
 
-        elif self.call.call_state == SIPCallState.TRYING and status == SIPStatusCode.REQUEST_TERMINATED:
+        if self.call.call_state == SIPCallState.TRYING and status == SIPStatusCode.REQUEST_TERMINATED:
             cseq = msg.get_header('cseq')[0] + 1
             self.call.last_used_cseq_num = cseq
+
             ack = SIPMsgFactory.create_request(
                 SIPMethod.ACK,
                 SIP_VERSION,
                 SERVER_URI,
                 self.uri,
-                self.call.current_call_id,
+                self.call.call_id,
                 cseq
             )
             send_sip_tcp(self.socket, str(ack).encode())
             self.clear_call()
+            return
+
+        # === Unexpected or Unhandled Response ===
+        self.controller.gui.model.error.error_msg = "error"
+        self.controller.gui.model.error.return_screen = "make call"
+        self.controller._show_gui_screen('error')
+        print("error: Unexpected SIP response received:", status)
+
 
     def register(self):
 
@@ -362,9 +382,9 @@ class SIPHandler(ControllerAware):
         self.lingering_data = None
         self.controller.clear_rtp_ports()
 
-if __name__ == '__main__':
-    cli = SIPHandler('user1', '3433')
-    cli.connect()
-    cli.start()
-    cli.register()
+# if __name__ == '__main__':
+#     cli = SIPHandler('user1', '3433')
+#     cli.connect()
+#     cli.start()
+#     cli.register()
 

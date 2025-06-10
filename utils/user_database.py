@@ -117,4 +117,4 @@ class UserDatabase:
 if __name__ == '__main__':
     my_db = UserDatabase()
     # print(my_db.add_user('user6', '122345453'))
-    print(my_db.user_exists('user1'))
+    print(my_db.add_user('ts2', '123456'))

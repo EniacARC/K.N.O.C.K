@@ -1,6 +1,6 @@
 from client.rtp_logic.rtp_manager import RTPManager
 from client.sip_logic.sip_client import SIPHandler
-from .mediator_connect import MediatorInterface
+from mediator_connect import MediatorInterface
 
 class Mediator(MediatorInterface):
     def __init__(self):
@@ -30,6 +30,12 @@ class Mediator(MediatorInterface):
         """
         self.rtp_manager = rtp_manager
         rtp_manager.set_controller(self)
+
+    def start(self, screen_name):
+        if self.gui and self.sip_client and self.rtp_manager:
+            self.sip_client.connect()
+            self.sip_client.start()
+            self.gui.start(screen_name)
 
     # === SIP -> RTPManager ===
 
@@ -107,9 +113,9 @@ class Mediator(MediatorInterface):
         Notify the GUI of an incoming call and show the answer screen.
         """
         self.gui.model.call.uri = uri_call
-        self._show_gui_screen('answer call')
+        self._show_gui_screen('incoming call')
 
-    def response_for_login(self, success):
+    def response_for_login(self, success=''):
         """
         Send login response status to the GUI controller.
         """
@@ -117,7 +123,7 @@ class Mediator(MediatorInterface):
             lambda: self.gui.current_controller.sign_in_answer(success)
         )
 
-    def response_for_signup(self, success):
+    def response_for_signup(self, success=''):
         """
         Send signup response status to the GUI controller.
         """

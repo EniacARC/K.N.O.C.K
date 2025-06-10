@@ -18,7 +18,7 @@ class DialingController(BaseController):
     def bind(self):
         self.view.cancel_btn.config(command=self.on_cancel)
         # self.view.after(3000, self.app.show_screen('video'))
-        self.view.after(200, lambda: self.app.show_screen('video'))
+        # self.view.after(200, lambda: self.app.show_screen('video'))
 
     def animate(self):
         dots = next(self.dots_cycle)

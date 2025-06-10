@@ -17,7 +17,8 @@ class IncomingCallController(BaseController):
         self.view.caller_label.config(text=self.model.uri) # set uri to the caller uri
 
     def on_answer(self):
-        self.app.show_screen("video screen")
+        # self.app.show_screen("video")
+        self.app.controller.answer_call(True)
 
     def on_decline(self):
-        self.app.show_screen("make call")
+        self.app.controller.answer_call(False)

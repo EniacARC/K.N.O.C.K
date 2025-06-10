@@ -64,8 +64,8 @@ class CallController(BaseController):
         :returns: none
         """
         while self.running:
-            audio_frame = self.app.mediator.get_next_audio_frame()
-            video_frame = self.app.mediator.get_next_video_frame()
+            audio_frame = self.app.controller.get_next_audio_frame()
+            video_frame = self.app.controller.get_next_video_frame()
 
             now = time.time()
 

@@ -31,7 +31,7 @@ class LoginController(BaseController):
         if username and password:
             self.model.username = username
             self.model.password = password
-            self.app.mediator.signin(username, password)
+            self.app.controller.login(username, password)
 
     def sign_in_answer(self, success):
         if success == '':

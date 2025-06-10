@@ -21,7 +21,7 @@ class SignupController(BaseController):
         if username and password:
             self.model.username = username
             self.model.password = password
-            self.app.mediator.signup(username, password)
+            self.app.controller.signup(username, password)
 
     def signup_answer(self, success):
         if success == '':

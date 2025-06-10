@@ -549,9 +549,16 @@ class SIPServer:
         call_id = req.get_header("call-id")
         cseq = req.get_header('cseq')[0]
 
+        # verify uri of the sender is real
         if not self.user_db.user_exists(uri_sender):
-            # register is to the server only
+
             error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_FOUND, SERVER_URI)
+            self._send_to_client(sock, str(error_msg).encode())
+            return
+        # verify not the same user
+        if uri_sender == uri_recv:
+            print("sending err")
+            error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.BAD_REQUEST, SERVER_URI)
             self._send_to_client(sock, str(error_msg).encode())
             return
 
@@ -870,10 +877,9 @@ class SIPServer:
         :param res: The SIP response to be processed
         :type res: SIPResponse
         """
-        print(res)
         not_valid = self._check_response_valid(res)
         if not_valid:
-            print(res)
+            print("not valid")
             self._send_to_client(sock, str(not_valid).encode())
             return
         print("valid res")
@@ -993,8 +999,8 @@ class SIPServer:
         while self.running:
             """Removes registrations that are past expiration"""
             with self.reg_lock:
-                for uri, user in self.registered_user.val_to_obj:
-                    if (datetime.datetime.now() - user.registration_time) >= user.expires:
+                for uri, user in self.registered_user.val_to_obj.items():
+                    if (datetime.datetime.now() - user.registration_time).total_seconds() >= user.expires:
                         self.registered_user.remove_by_val(uri)
             time.sleep(30)
 
@@ -1002,9 +1008,8 @@ class SIPServer:
         while self.running:
             """Removes calls with sockets that are inactive"""
             with self.call_lock:
-                for call_id, call in self.active_calls:
-                    if (
-                            datetime.datetime.now() - call.last_active) >= CALL_IDLE_LIMIT and call.call_type != SIPCallState.IN_CALL:
+                for call_id, call in self.active_calls.items():
+                    if (datetime.datetime.now() - call.last_active).total_seconds() >= CALL_IDLE_LIMIT and call.call_type != SIPCallState.IN_CALL:
 
                         # send to the clients that the call was terminated if active
                         end_msg = SIPMsgFactory.create_response(SIPStatusCode.DOES_NOT_EXIST_ANYWHERE, SIP_VERSION,
@@ -1097,14 +1102,14 @@ class SIPServer:
                     if call.call_type == SIPCallType.INVITE:
                         print("adawd")
                         send_sock = call.caller_socket if call.callee_socket == sock else call.callee_socket
-                        with self.reg_lock:
-                            if self.registered_user.get_by_key(send_sock):
-                                to_uri = self.registered_user.get_by_key(send_sock).uri
-                                end_msg = SIPMsgFactory.create_response(SIPStatusCode.DOES_NOT_EXIST_ANYWHERE,
-                                                                        SIP_VERSION,
-                                                                        SIPMethod.OPTIONS, call.last_used_cseq_num,
-                                                                        to_uri, SERVER_URI, call.call_id)
-
+                        if send_sock: # if there was another side (maybe different case for bye?)
+                            with self.reg_lock:
+                                if self.registered_user.get_by_key(send_sock):
+                                    to_uri = self.registered_user.get_by_key(send_sock).uri
+                                    end_msg = SIPMsgFactory.create_response(SIPStatusCode.DOES_NOT_EXIST_ANYWHERE,
+                                                                            SIP_VERSION,
+                                                                            SIPMethod.OPTIONS, call.last_used_cseq_num,
+                                                                            to_uri, SERVER_URI, call.call_id)
                     if call.uri in self.pending_auth:
                         del self.pending_auth[call.uri]
                     del self.active_calls[call_id]

@@ -9,9 +9,8 @@ from .controllers.error_controller import ErrorController
 from client.mediator_connect import ControllerAware
 
 class AppController(ControllerAware):
-    def __init__(self, mediator, model, view):
+    def __init__(self, model, view):
         super().__init__()
-        self.mediator = mediator
         self.model = model
         self.view = view
         # Controllers
@@ -62,14 +61,14 @@ class AppController(ControllerAware):
         self.show_screen('error')
 
     # mediator funcs
-    def start(self):
+    def start(self, screen_name):
         """
         Start the application by showing the login screen and starting the GUI loop.
 
         :params: none
         :returns: none
         """
-        self.show_screen("login")
+        self.show_screen(screen_name)
         self.view.start_mainloop()
 
     # mediator is called from another thread. we need tp update in a thread safe way
