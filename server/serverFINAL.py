@@ -924,8 +924,7 @@ class SIPServer:
                     elif call.call_state == SIPCallState.RINGING and res.status_code == SIPStatusCode.DECLINE:
                         print("call declined!")
                         with self.call_lock:
-                            del self.active_calls[
-                                call_id]  # the call was declined, remove call send decline to other side
+                            del self.active_calls[call_id]  # the call was declined, remove call send decline to other side
                     elif call.call_state == SIPCallState.RINGING and res.status_code == SIPStatusCode.OK:
                         call.call_state = SIPCallState.WAITING_ACK
                         if not res.body:
@@ -1100,7 +1099,6 @@ class SIPServer:
             for call_id, call in list(self.active_calls.items()):
                 if call.caller_socket is sock or call.callee_socket is sock:
                     if call.call_type == SIPCallType.INVITE:
-                        print("adawd")
                         send_sock = call.caller_socket if call.callee_socket == sock else call.callee_socket
                         if send_sock: # if there was another side (maybe different case for bye?)
                             with self.reg_lock:

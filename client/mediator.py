@@ -131,6 +131,14 @@ class Mediator(MediatorInterface):
             lambda: self.gui.current_controller.signup_answer(success)
         )
 
+    def trying_to_dial(self):
+        self._show_gui_screen('dialing')
+
+    def display_error(self, error_msg):
+        self.gui.trigger_function_mediator(
+            lambda: self.gui.display_error(error_msg)
+        )
+
     # === GUI -> RTPManager ===
 
     def get_next_audio_frame(self):
@@ -170,7 +178,7 @@ class Mediator(MediatorInterface):
         Initiate a SIP call to the given URI and show dialing screen.
         """
         self.sip_client.invite(uri)
-        self._show_gui_screen('dialing')
+        # self._show_gui_screen('dialing')
 
     def end_call_request(self):
         """

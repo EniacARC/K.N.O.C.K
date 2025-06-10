@@ -26,6 +26,7 @@ class AppController(ControllerAware):
 
         self.current_controller = None
         self.current_screen = ""
+        self.default_screen = "login"
 
     def show_screen(self, screen_name):
         """
@@ -45,7 +46,7 @@ class AppController(ControllerAware):
 
         self.current_controller = self.controllers[screen_name](self, view_obj, self.model)
         # not need for on_show. the on_show is now the constractor
-    def display_error(self, msg, return_to):
+    def display_error(self, msg, return_to=''):
         """
         Display an error message and navigate to the error screen.
 
@@ -57,18 +58,30 @@ class AppController(ControllerAware):
 
         :returns: none
         """
+
+        # only controller/sip can call this event which must mean there is a current_screen. add default just in case
         self.model.error.set_error(msg, return_to)
+        if return_to != '':
+            self.model.error.set_error(msg, return_to)
+        else:
+            if self.current_screen != '':
+                self.model.error.set_error(msg, self.current_screen)
+            else:
+                self.model.error.set_error(msg, self.default_screen)
         self.show_screen('error')
 
     # mediator funcs
-    def start(self, screen_name):
+    def start(self, screen_name=''):
         """
         Start the application by showing the login screen and starting the GUI loop.
 
         :params: none
         :returns: none
         """
-        self.show_screen(screen_name)
+        if screen_name != '':
+            self.show_screen(screen_name)
+        else:
+            self.show_screen(self.default_screen)
         self.view.start_mainloop()
 
     # mediator is called from another thread. we need tp update in a thread safe way

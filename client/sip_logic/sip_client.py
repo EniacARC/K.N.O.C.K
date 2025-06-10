@@ -43,7 +43,6 @@ class SIPHandler(ControllerAware):
         self.call = None
 
         self.auth_authority = AuthService(SERVER_URI)
-        self.lingering_data = None
 
     def connect(self):
         try:
@@ -73,13 +72,17 @@ class SIPHandler(ControllerAware):
                 msg = receive_tcp_sip(sock, MAX_PASSES_META, MAX_PASSES_BODY)
                 print(f"{self.uri} recvd: {msg}")
 
-                if isinstance(msg, SIPRequest):
-                    self._handle_request(msg)
-                elif self.call:
-                    if msg.get_header('call-id') == self.call.call_id:
-                        self.process_response(msg)
+                if msg is not None:
+                    if isinstance(msg, SIPRequest):
+                        self._handle_request(msg)
+                    elif self.call:
+                        if msg.get_header('call-id') == self.call.call_id:
+                            self.process_response(msg)
+                    else:
+                        pass # this is for keep alive
                 else:
-                    pass # this is for keep alive
+                    print("hello")
+                    self.connected = False # end all
 
     def _handle_request(self, msg):
         method = msg.method
@@ -108,6 +111,7 @@ class SIPHandler(ControllerAware):
                 last_used_cseq_num=msg.get_header('cseq')[0],
 
             )
+            print(self.call)
             self.process_invite(msg)
 
     def process_request(self, msg):
@@ -122,6 +126,8 @@ class SIPHandler(ControllerAware):
             self.process_bye(msg)
 
     def answer_call(self, answer_call):
+        print(self.call)
+
         if self.call.call_state != SIPCallState.RINGING:
             print("The call has changed its state")
             return
@@ -134,7 +140,6 @@ class SIPHandler(ControllerAware):
             send_sip_tcp(self.socket, str(res).encode())
             self.clear_call()
 
-        self.call.call_data = None
 
     def _handle_call_acceptance(self):
         sdp_recv = SDP.parse(self.call.call_data.body)
@@ -156,6 +161,7 @@ class SIPHandler(ControllerAware):
         res = SIPMsgFactory.create_response_from_request(
             self.call.call_data, SIPStatusCode.OK, self.uri, body=str(local_sdp))
         send_sip_tcp(self.socket, str(res).encode())
+        self.call.call_data = None
 
     def process_invite(self, msg):
         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.RINGING, self.uri)
@@ -218,7 +224,7 @@ class SIPHandler(ControllerAware):
         return parsed
 
     def process_response(self, msg):
-        print(self.call)
+        print(msg)
         """
         Process a SIP response message.
 
@@ -243,13 +249,14 @@ class SIPHandler(ControllerAware):
                 self.clear_call()
                 self.controller.response_for_login()
             else:
-                self.controller.response_for_login(status.value)
+                self.controller.response_for_login(status.value[1])
             return
 
         # === INVITE Handling ===
         if self.call.call_type == SIPCallType.INVITE:
             if self.call.call_state is SIPCallState.WAITING_AUTH and status == SIPStatusCode.TRYING:
                 self.call.call_state = SIPCallState.TRYING
+                self.controller.trying_to_dial()
                 return
 
             if self.call.call_state == SIPCallState.TRYING and status == SIPStatusCode.RINGING:
@@ -314,9 +321,10 @@ class SIPHandler(ControllerAware):
             return
 
         # === Unexpected or Unhandled Response ===
-        self.controller.gui.model.error.error_msg = "error"
-        self.controller.gui.model.error.return_screen = "make call"
-        self.controller._show_gui_screen('error')
+        # self.controller.gui.model.error.error_msg = "error"
+        # self.controller.gui.model.error.return_screen = "make call"
+        # self.controller._show_gui_screen('error')
+        self.controller.display_error(status.value[1])
         print("error: Unexpected SIP response received:", status)
 
 
