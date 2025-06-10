@@ -379,7 +379,7 @@ class SIPServer:
                 print(req)
                 self.ack_request(sock, req)  # Handle ACK end of invite - start RTP
             elif method == SIPMethod.BYE.value:
-                pass  # Handle BYE
+                self.bye_request(sock, req)
 
     def _check_request_validly(self, msg):
         """
@@ -429,8 +429,6 @@ class SIPServer:
             if call_id in self.active_calls:
                 print("in call")
                 call = self.active_calls[call_id]
-                print(call)
-                print(cseq)
                 if cseq != call.last_used_cseq_num + 1 or (
                         call.uri != uri_recv and call.uri != uri_send) or call.call_type != SIPCallType.INVITE and call.call_state != SIPCallState.IN_CALL:
                     print("call invalid")
@@ -438,11 +436,14 @@ class SIPServer:
                     self._send_to_client(sock, str(error_msg).encode())
                     return
                 call.last_active = datetime.datetime.now()
+                call.last_used_cseq_num = cseq
 
             # call valid - foward request
-            send_sock = call.caller_socket if call.caller_socket == sock else call.callee_socket
-            if self._send_to_client(send_sock, str(req).encode()):
-                call.call_state = SIPCallState.WAITING_BYE
+            print("bye valid")
+            send_sock = call.caller_socket if call.callee_socket == sock else call.callee_socket
+            self._send_to_client(send_sock, str(req).encode())
+            print("sended msg")
+            call.call_state = SIPCallState.WAITING_BYE
 
     def ack_request(self, sock, req):
         """
@@ -471,6 +472,7 @@ class SIPServer:
                     self._send_to_client(sock, str(error_msg).encode())
                     return
                 call.last_active = datetime.datetime.now()
+                call.last_used_cseq_num = cseq
 
                 print("hello")
                 print(call.call_state)
@@ -513,9 +515,8 @@ class SIPServer:
                     return
                     # the call is in the correct state and can be canceled
                 call.last_active = datetime.datetime.now()
+                call.last_used_cseq_num = cseq
 
-            call.last_used_cseq_num = cseq
-            call.last_active = datetime.datetime.now()
             # send ok response so the client knows I received. the canceling side must be the callee
             res_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.OK, SERVER_URI)
             self._send_to_client(sock, str(res_msg).encode())
@@ -582,7 +583,6 @@ class SIPServer:
                     last_active=datetime.datetime.now()
                 )
                 self.active_calls[call_id] = call
-            call.last_used_cseq_num = cseq
             call.last_active = datetime.datetime.now()
 
             # made sure the user is auth
@@ -708,7 +708,6 @@ class SIPServer:
                 )
                 self.active_calls[call_id] = call
 
-            call.last_used_cseq_num = cseq
             call.last_active = datetime.datetime.now()
 
         print(f"for {uri} checking prev")
@@ -882,6 +881,7 @@ class SIPServer:
             print("not valid")
             self._send_to_client(sock, str(not_valid).encode())
             return
+
         print("valid res")
 
         uri = res.get_header('from')
@@ -889,6 +889,15 @@ class SIPServer:
         call_id = res.get_header("call-id")
         cseq = res.get_header('cseq')[0]
         call_id = res.get_header('call-id')
+
+        print(f"msg: {res}")
+        print(self.pending_keep_alive)
+
+        if to_uri == uri:
+            # not valid recv
+            not_valid.status_code = SIPStatusCode.BAD_REQUEST
+            self._send_to_client(sock, str(not_valid).encode())
+            return
         with self.call_lock:
             if call_id not in self.active_calls and call_id not in self.pending_keep_alive:
                 # the call doesn't exist
@@ -904,10 +913,18 @@ class SIPServer:
                 call.last_active = datetime.datetime.now()
 
         if call_id in self.pending_keep_alive:
+            print("keep alive response")
             with self.conn_lock:
                 # The response is to a keep alive
+
+                print(res.status_code is SIPStatusCode.OK and res.get_header('cseq')[0] == self.pending_keep_alive[
+                    call_id].last_used_cseq_num)
+                print(res.status_code is SIPStatusCode.OK)
+                print(res.get_header('cseq')[0] == self.pending_keep_alive[
+                    call_id].last_used_cseq_num)
                 if res.status_code is SIPStatusCode.OK and res.get_header('cseq')[0] == self.pending_keep_alive[
                     call_id].last_used_cseq_num:
+                    print("deleting entry")
                     del self.pending_keep_alive[call_id]  # The response was valid so the connection is kept alive
                 # Else response is invalid, and we drop them at the next keep_alive check
         else:
@@ -941,6 +958,7 @@ class SIPServer:
                         self._send_to_client(sock, str(ack_req).encode())
                         # del self.active_calls[call_id] - do it in the ack
                     elif call.call_state == SIPCallState.WAITING_BYE and res.status_code == SIPStatusCode.OK:
+                        print("call ended")
                         # delete call
                         with self.call_lock:
                             del self.active_calls[call_id]
@@ -952,6 +970,8 @@ class SIPServer:
 
                     # forward to other side
                     send_sock = call.caller_socket if sock != call.caller_socket else call.callee_socket
+                    print(f"fowarding to: {send_sock}")
+                    print(f"call:{call}")
                     self._send_to_client(send_sock, str(res).encode())
                 else:
                     # if the call was not an invite then it is not possible to send response
@@ -1008,22 +1028,23 @@ class SIPServer:
             """Removes calls with sockets that are inactive"""
             with self.call_lock:
                 for call_id, call in self.active_calls.items():
-                    if (datetime.datetime.now() - call.last_active).total_seconds() >= CALL_IDLE_LIMIT and call.call_type != SIPCallState.IN_CALL:
+                    if (datetime.datetime.now() - call.last_active).total_seconds() >= CALL_IDLE_LIMIT and call.call_state != SIPCallState.IN_CALL:
 
                         # send to the clients that the call was terminated if active
+                        print(f"inactive call: {call}")
                         end_msg = SIPMsgFactory.create_response(SIPStatusCode.DOES_NOT_EXIST_ANYWHERE, SIP_VERSION,
                                                                 SIPMethod.OPTIONS,
                                                                 SIPMethod.INVITE, 'none', SERVER_URI, call.call_id)
                         send_sock = call.caller_socket
                         if self.registered_user.get_by_key(send_sock):
-                            end_msg.set_header('to', self.registered_user.get_by_key(send_sock))
+                            end_msg.set_header('to', self.registered_user.get_by_key(send_sock).uri)
                         self._send_to_client(send_sock, str(end_msg).encode())
                         del self.active_calls[call_id]
 
                         send_sock = call.callee_socket
                         if send_sock != self.server_socket:
                             if self.registered_user.get_by_key(send_sock):
-                                end_msg.set_header('to', self.registered_user.get_by_key(send_sock))
+                                end_msg.set_header('to', self.registered_user.get_by_key(send_sock).uri)
                             else:
                                 end_msg.set_header('to', 'none')
                             self._send_to_client(send_sock, str(end_msg).encode())
@@ -1062,6 +1083,7 @@ class SIPServer:
                     # Socket should be in connected users. Check for safety
                     if keep_alive.client_socket in self.connected_users:
                         del self.pending_keep_alive[call_id]
+                        print("removing client")
                         self._close_connection(keep_alive.client_socket)
                 # Everyone that remained has answered the keep alive
                 for sock in self.connected_users:

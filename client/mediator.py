@@ -210,7 +210,7 @@ class Mediator(MediatorInterface):
         """
         End the current call and send a SIP BYE request.
         """
-        self.sip_client.send_bye()
+        self.sip_client.bye()
 
     # === Helper Methods ===
 

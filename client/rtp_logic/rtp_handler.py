@@ -139,6 +139,7 @@ class RTPHandler:
                 # Parse the received packet
             except Exception as e:
                 print(f"Error in receive loop: {e}")
+                print(self.remote_seq)
 
 
     def _build_packets(self, payload):

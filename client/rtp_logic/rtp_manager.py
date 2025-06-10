@@ -43,12 +43,12 @@ def _send_audio_process(send_ip, send_audio, running_event):
             sender.send_packet(audio_data)
 
             # FPS counting
-            frame_count += 1
-            elapsed = time.time() - start_time
-            if elapsed >= 1.0:
-                print(f"AUDIO FPS: {frame_count}")
-                frame_count = 0
-                start_time = time.time()
+            # frame_count += 1
+            # elapsed = time.time() - start_time
+            # if elapsed >= 1.0:
+            #     print(f"AUDIO FPS: {frame_count}")
+            #     frame_count = 0
+            #     start_time = time.time()
 
             # Sleep to cap at 50 FPS
             elapsed_loop = time.time() - loop_start
@@ -373,6 +373,8 @@ class RTPManager(ControllerAware):
 
         :returns: None
         """
+
+        print("stopping rtp")
         if self.running_event:
             self.running_event.clear()
 

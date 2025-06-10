@@ -145,7 +145,7 @@ class CallController(BaseController):
         self.running = False
         # self.thread.join() # freezes main thread
         print("ended")
-        self.app.show_screen('make call')
+        self.app.controller.end_call_request()
 
     def temp_play_video(self, frame):
         """

@@ -99,6 +99,7 @@ class SIPHandler(ControllerAware):
 
     def _handle_options(self, msg):
         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri)
+        print(f"sending: {res}")
         send_sip_tcp(self.socket, str(res).encode())
 
     def _handle_invite(self, msg):
@@ -175,6 +176,7 @@ class SIPHandler(ControllerAware):
 
     def process_cancel(self, msg):
         if self.call.call_state == SIPCallState.RINGING:
+            self.call.last_used_cseq_num += 1
             res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri)
             if send_sip_tcp(self.socket, str(res).encode()):
                 res.status_code = SIPStatusCode.REQUEST_TERMINATED
@@ -182,13 +184,18 @@ class SIPHandler(ControllerAware):
                     self.call.call_state = SIPCallState.TRYING_CANCEL
 
     def process_ack(self, msg):
+        self.call.last_used_cseq_num += 1
         if self.call.call_state == SIPCallState.TRYING_CANCEL:
             self.clear_call("call was canceled")
         else:
             self.controller.start_stream()
 
     def process_bye(self, msg):
+        print(msg)
+        self.call.last_used_cseq_num += 1
+
         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri)
+        print(f"sending ok: {res}")
         send_sip_tcp(self.socket, str(res).encode())
         self.clear_call("call ended")
 
@@ -309,7 +316,7 @@ class SIPHandler(ControllerAware):
             self.call.call_state = SIPCallState.TRYING_CANCEL
             return
 
-        if self.call.call_state == SIPCallState.TRYING_CANCEL and status == SIPStatusCode.REQUEST_TERMINATED:
+        elif self.call.call_state == SIPCallState.TRYING_CANCEL and status == SIPStatusCode.REQUEST_TERMINATED:
             cseq = msg.get_header('cseq')[0] + 1
             self.call.last_used_cseq_num = cseq
 
@@ -322,6 +329,13 @@ class SIPHandler(ControllerAware):
                 cseq
             )
             send_sip_tcp(self.socket, str(ack).encode())
+            self.clear_call()
+            return
+
+        # === BYE Handling ===
+        print(self.call)
+        if self.call.call_state == SIPCallState.WAITING_BYE and status == SIPStatusCode.OK:
+            print("clearing")
             self.clear_call()
             return
 
@@ -369,6 +383,7 @@ class SIPHandler(ControllerAware):
 
     def bye(self):
         self.call.last_used_cseq_num += 1
+        print(self.call)
         req = SIPMsgFactory.create_request(SIPMethod.BYE,
                                            SIP_VERSION,
                                            self.call.remote_uri,
@@ -377,6 +392,8 @@ class SIPHandler(ControllerAware):
                                            self.call.last_used_cseq_num)
         self.call.call_state = SIPCallState.WAITING_BYE
         send_sip_tcp(self.socket, str(req).encode())
+        print("sending bye")
+        print(req)
 
     def cancel(self):
         self.call.last_used_cseq_num += 1
