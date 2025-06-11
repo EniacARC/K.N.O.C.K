@@ -1,5 +1,9 @@
 import socket
 import struct
+import threading
+import time
+
+from encryption.aes import AESCryptGCM
 
 from utils.sip_msgs import *
 
@@ -180,3 +184,97 @@ def receive_tcp_sip(sock, max_passes_metadata, max_passes_body):
         else:
             return sip_msg
     return None
+
+
+def send_encrypted(sock, data):
+    """
+    data in byts
+    protocol is len(4 bytes) + data(bytes)
+    """
+
+    data_len = struct.pack(PACK_SIGN, socket.htonl(len(data)))
+    to_send = data_len + data
+    try:
+        sent = 0
+        while sent < len(to_send):
+            sent += sock.send(to_send[sent:])
+        return True
+    except socket.error as err:
+        print(f"error while sending at: {err}")
+        return False
+
+def recv_encrypted(sock):
+    """
+    return decrypted bytes
+    """
+    data_len_bytes = b''
+    data = b''
+    while len(data_len_bytes) < INT_SIZE:
+        buf = sock.recv(INT_SIZE - len(data_len_bytes))
+        if buf == b'':
+            data_len_bytes = b''
+            break
+        data_len_bytes += buf
+    if data_len_bytes != b'':
+        data_len = socket.htonl(struct.unpack(PACK_SIGN, data_len_bytes)[0])
+
+        while len(data) < data_len:
+            buf = sock.recv(data_len - len(data))
+            if buf == b'':
+                data = b''
+                break
+            data += buf
+
+    return data
+
+
+# aes1 = AESCryptGCM()
+#
+# def receiver():
+#     sock_recv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#     sock_recv.bind(('0.0.0.0', 12345))
+#     sock_recv.listen(5)
+#     print("listening")
+#     client_sock, addr = sock_recv.accept()
+#     print("accepted")
+#     enc = recv_encrypted(client_sock)
+#     print(enc)
+#     print(aes1.decrypt(enc).decode())
+#     client_sock.close()
+#     sock_recv.close()
+#
+#
+#
+# def sender():
+#     msg = "Hello World"
+#     sock_send = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#     sock_send.connect(('127.0.0.1', 12345))
+#     print("connected")
+#     enc = aes1.encrypt(msg.encode())
+#     print(enc)
+#     send_encrypted(sock_send, enc)
+#     sock_send.close()
+#
+# # Create threads
+# t1 = threading.Thread(target=receiver)
+# t2 = threading.Thread(target=sender)
+#
+# # Start threads
+# t1.start()
+# t2.start()
+#
+# # Wait for threads to finish
+# t1.join()
+# t2.join()
+
+
+# sock_recv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+# sock_recv.bind(('0.0.0.0', 12345))
+# sock_recv.listen(5)
+# sock_send = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+# sock_send.connect(('127.0.0.1', 12345))
+#
+# send_encrypted(sock_send, msg.encode())
+# print(recv_encrypted(sock_recv).decode())
+
+

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from utils.comms import *
 import select
 from typing import Optional
+from utils.encryption.rsa import RSACrypt
 
 # Constants
 DEFAULT_SERVER_PORT = 4552
@@ -21,11 +22,36 @@ CALL_IDLE_LIMIT = 15
 REGISTER_LIMIT = 60
 REQUIRED_HEADERS = {'to', 'from', 'call-id', 'cseq'}  #'content-length'
 KEEP_ALIVE_MSG = SIPMsgFactory.create_request(SIPMethod.OPTIONS, SIP_VERSION, "keep-alive", "keep-alive",
-                                              "", "1")
+                                              "", 1)
 MAX_PASSES_META = 8000  # 8 kb
 MAX_PASSES_BODY = 1000
 
 BANNED_IPS_FILE = "banned_ips.txt"
+
+class EncryptedSocket:
+    def __init__(self, sock, encrypt_obj):
+        self.socket = sock
+        self.encrypt_obj = encrypt_obj
+
+    def fileno(self):
+        return self.socket.fileno()
+
+    def send(self, data):
+        return self.socket.send(data)
+
+    def recv(self, num_bytes):
+        return self.socket.recv(num_bytes)
+
+    def close(self):
+        return self.socket.close()
+
+    def __getattr__(self, name):
+        return getattr(self.sock, name)
+
+    def encrypt(self, data):
+        return self.encrypt_obj.encrypt(data)
+    def decrypt(self, data):
+        return self.decrypt(data)
 
 
 @dataclass
@@ -33,7 +59,7 @@ class RegisteredUser:
     """ Struct for registered user """
     uri: str
     address: (str, int)
-    socket: socket.socket
+    socket: EncryptedSocket
     registration_time: datetime.datetime
     expires: int  # amount of seconds
 
@@ -47,17 +73,21 @@ class Call:  # For both invite and register
     call_state: SIPCallState
     last_used_cseq_num: int
     last_active: datetime.datetime
-    callee_socket: socket.socket = None
-    caller_socket: Optional[socket.socket] = None
+    callee_socket: Optional[EncryptedSocket] = None
+    caller_socket: Optional[EncryptedSocket] = None
     uri_other: Optional[str] = None
 
+@dataclass
+class EncryptionCreation:
+    client_socket: EncryptedSocket
+    created_time: datetime.datetime
 
 @dataclass
 class KeepAlive:
     # Keep alive is for connection - not for registered uacs, so it's socket context
     call_id: str
     last_used_cseq_num: int
-    client_socket: socket.socket
+    client_socket: EncryptedSocket
 
 
 @dataclass
@@ -65,6 +95,7 @@ class AuthChallenge:
     # this is for remembering auth data sent to the client
     answer: str
     created_time: datetime.datetime
+
 
 
 class BiMap:
@@ -196,7 +227,8 @@ class SIPServer:
         self.pending_auth = {}  # uri -> AuthChallenge
 
         # Connection management - con lock
-        self.connected_users = []  # sockets
+        self.connected_users = []  # EncryptedSocket
+        self.pending_crypt = [] # sockets
         self.pending_keep_alive = {}  # call-id -> KeepAlive
 
         # ip lock
@@ -212,6 +244,11 @@ class SIPServer:
         # msg rate limiter for ddos
         self.msg_rate_limit = 100  # max allowed messages
         self.msg_time_window = 60  # seconds
+
+        # encryption - with conn lock
+        self.rsa_crypt = RSACrypt()
+        self.rsa_crypt.generate_keys()
+        self.public_key = self.rsa_crypt.export_public_key() # bytes
 
     def start(self):
         """
@@ -240,61 +277,89 @@ class SIPServer:
             # Start server loop
             while self.running:
                 with self.conn_lock:
-                    readable, _, _ = select.select(self.connected_users + [self.server_socket], [], [], 0.5)
-                for sock in readable:
-                    if sock is self.server_socket:
-                        # Incoming connection
-                        client_sock, addr = self.server_socket.accept()
-                        client_ip = addr[0]
-                        if client_ip in self.blacklist_ips or len(self.connected_users) >= self.max_connected:
-                            print("blacklisted")
-                            client_sock.close()
-                            continue
-                        # sliding window
-                        with self.ip_lock:
-                            now = time.time()
-                            self.ip_connection_counts[client_ip] = [
-                                t for t in self.ip_connection_counts[client_ip] if now - t < self.time_window
-                            ]
-                            self.ip_connection_counts[client_ip].append(now)
-                            print(f"{len(self.ip_connection_counts[client_ip])} for timeframe")
-
-                            if len(self.ip_connection_counts[client_ip]) > self.connection_threshold:
-                                print(f"Blacklisting IP {client_ip} for excessive connections.")
-                                self.blacklist_ips.add(client_ip)
-                                del self.ip_connection_counts[client_ip]
+                    readable, _, _ = select.select(self.pending_crypt + self.connected_users + [self.server_socket], [], [], 0.5)
+                with self.conn_lock:
+                    for sock in readable:
+                        if sock is self.server_socket:
+                            # Incoming connection
+                            client_sock, addr = self.server_socket.accept()
+                            client_ip = addr[0]
+                            if client_ip in self.blacklist_ips or len(self.connected_users) >= self.max_connected:
+                                print("blacklisted")
                                 client_sock.close()
                                 continue
+                            # sliding window
+                            with self.ip_lock:
+                                now = time.time()
+                                self.ip_connection_counts[client_ip] = [
+                                    t for t in self.ip_connection_counts[client_ip] if now - t < self.time_window
+                                ]
+                                self.ip_connection_counts[client_ip].append(now)
+                                print(f"{len(self.ip_connection_counts[client_ip])} for timeframe")
 
-                        with self.conn_lock:
-                            # add encryption
-                            self.connected_users.append(client_sock)
-                        print(f"added client at {addr}")
-                    else:
-                        # Rate-limit messages per connection
-                        with self.ip_lock:
-                            now = time.time()
-                            self.ip_message_counts[sock] = [
-                                t for t in self.ip_message_counts[sock] if now - t < self.msg_time_window
-                            ]
-                            self.ip_message_counts[sock].append(now)
+                                if len(self.ip_connection_counts[client_ip]) > self.connection_threshold:
+                                    print(f"Blacklisting IP {client_ip} for excessive connections.")
+                                    self.blacklist_ips.add(client_ip)
+                                    del self.ip_connection_counts[client_ip]
+                                    client_sock.close()
+                                    continue
 
-                            # if too many msgs close connection
-                            if len(self.ip_message_counts[sock]) > self.msg_rate_limit:
-                                print(f"Too many messages from {sock}, closing connection.")
-                                del self.ip_message_counts[sock]
-                                self._close_connection(sock)
-                                continue
+                            # with self.conn_lock:
+                            #     # add encryption
+                            # self.connected_users.append(client_sock)
 
-                        # returns sip msg object and checks is in format and in valid bounds
-                        msg = receive_tcp_sip(sock, MAX_PASSES_META, MAX_PASSES_BODY)
-                        print(f" got msg: {msg}")
-                        if msg:
-                            self.thread_pool.submit(self._worker_process_msg, sock, msg)
+                            # send rsa key
+                            send_encrypted(client_sock, self.public_key)
+                            self.pending_crypt.append(client_sock)
+                            print(f"added client to pending auth at {addr}")
+                        elif sock in self.pending_crypt:
+                            # client sent aes key
+                            # recv encrypted
+                            # create aes obj
+                            # add to connected_users
+                            # send keep alive msg + add to keep alive queue
+                            rsa_encrypted = recv_encrypted(sock)
+                            if aes_key != b'':
+                                aes_key = self.rsa_crypt.decrypt(rsa_encrypted) # aes key is bytes obj
+                                encrypt_obj = AESCryptGCM(aes_key)
+                                self.connected_users.append(EncryptedSocket(sock, encrypt_obj))
+                                self.pending_crypt.remove(sock)
+
+                                # send keep alive + add to keep alive queue
                         else:
+                            # Rate-limit messages per connection
+                            with self.ip_lock:
+                                now = time.time()
+                                self.ip_message_counts[sock] = [
+                                    t for t in self.ip_message_counts[sock] if now - t < self.msg_time_window
+                                ]
+                                self.ip_message_counts[sock].append(now)
+
+                                # if too many msgs close connection
+                                if len(self.ip_message_counts[sock]) > self.msg_rate_limit:
+                                    print(f"Too many messages from {sock}, closing connection.")
+                                    del self.ip_message_counts[sock]
+                                    self._close_connection(sock)
+                                    continue
+
+                            # returns sip msg object and checks is in format and in valid bounds
+                            # recv encrypted(sock, aes key)
+                            # msg = parse_sip(decrypted_bytes)
+                            # msg = receive_tcp_sip(sock, MAX_PASSES_META, MAX_PASSES_BODY)
+
+
+                            msg_encrypted = recv_encrypted(sock)
+                            if msg_encrypted != b'':
+                                msg_raw = sock.decrypt(msg_encrypted).decode() # decrypt returns bytes so decode to get str
+                                msg = SIPMsgFactory.parse(msg_raw.decode())
+                                print(f"got msg: {msg}")
+                                if msg:
+                                    self.thread_pool.submit(self._worker_process_msg, sock, msg)
+                                    continue
+                            # if msg wasn't valid close connection
                             self._close_connection(sock)
         except Exception as err:
-            print(str(err) + "something went wrong!")
+            print(str(err) + ' ' + "something went wrong!")
         finally:
             self.thread_pool.shutdown(wait=True)
             self.running = False
@@ -342,7 +407,7 @@ class SIPServer:
         Route SIP messages to appropriate processing methods based on message type.
 
         :param sock: Client socket from which the message was received
-        :type sock: socket.socket
+        :type sock: EncryptedSocket
         :param msg: SIP message object (request or response)
         :type msg: SIPRequest or SIPResponse
         """
@@ -356,7 +421,7 @@ class SIPServer:
         Process a SIP request, including REGISTER, INVITE, ACK, and BYE methods.
 
         :param sock: Socket from which the request was received
-        :type sock: socket.socket
+        :type sock: EncryptedSocket
         :param req: The SIP request to be processed
         :type req: SIPRequest
         """
@@ -416,7 +481,7 @@ class SIPServer:
         Handle a BYE SIP request to terminate an ongoing call.
 
         :param sock: Socket from which the request was received
-        :type sock: socket.socket
+        :type sock: EncryptedSocket
         :param req: The BYE SIP request
         :type req: SIPRequest
         """
@@ -450,7 +515,7 @@ class SIPServer:
         Handle an ACK SIP request to confirm receipt of a final response to an INVITE.
 
         :param sock: Socket from which the request was received
-        :type sock: socket.socket
+        :type sock: EncryptedSocket
         :param req: The ACK SIP request
         :type req: SIPRequest
         """
@@ -495,7 +560,7 @@ class SIPServer:
         Handle a CANCEL SIP request to terminate a pending INVITE call before it's accepted.
 
         :param sock: Socket from which the request was received
-        :type sock: socket.socket
+        :type sock: EncryptedSocket
         :param req: The CANCEL SIP request
         :type req: SIPRequest
         """
@@ -538,7 +603,7 @@ class SIPServer:
         Handle an INVITE SIP request, authenticate the sender, and initiate a call session.
 
         :param sock: Socket from which the request was received
-        :type sock: socket.socket
+        :type sock: EncryptedSocket
         :param req: The INVITE SIP request
         :type req: SIPRequest
         """
@@ -655,7 +720,7 @@ class SIPServer:
         Handle a REGISTER SIP request to authenticate and store the user's registration.
 
         :param sock: Socket from which the request was received
-        :type sock: socket.socket
+        :type sock: EncryptedSocket
         :param req: The REGISTER SIP request
         :type req: SIPRequest
         """
@@ -700,7 +765,7 @@ class SIPServer:
                     call_id=call_id,
                     uri=uri,
                     uri_other=SERVER_URI,
-                    callee_socket=self.server_socket,
+                    callee_socket=None, # server socket is not encrypted socket obj
                     caller_socket=sock,
                     call_state=SIPCallState.WAITING_AUTH,
                     last_used_cseq_num=cseq,
@@ -837,7 +902,7 @@ class SIPServer:
         """
         Send an authentication challenge to the client.
         :param sock: Socket to send the challenge to
-        :type sock: socket.socket
+        :type sock: EncryptedSocket
         :param request: Original SIP request needing authentication
         :type request: SIPRequest
         """
@@ -872,7 +937,7 @@ class SIPServer:
         Process a SIP response and perform call state transitions and validations.
 
         :param sock: Socket from which the response was received
-        :type sock: socket.socket
+        :type sock: EncryptedSocket
         :param res: The SIP response to be processed
         :type res: SIPResponse
         """
@@ -1041,8 +1106,8 @@ class SIPServer:
                         self._send_to_client(send_sock, str(end_msg).encode())
                         del self.active_calls[call_id]
 
-                        send_sock = call.callee_socket
-                        if send_sock != self.server_socket:
+                        send_sock = call.callee_socket # if it's register the callee socket will be none
+                        if send_sock:
                             if self.registered_user.get_by_key(send_sock):
                                 end_msg.set_header('to', self.registered_user.get_by_key(send_sock).uri)
                             else:
@@ -1101,13 +1166,14 @@ class SIPServer:
         Close a client connection and clean up all associated state (users, calls, etc.).
 
         :param sock: The socket to be closed
-        :type sock: socket.socket
+        :type sock: EncryptedSocket
         """
         print("closing connection!")
         with self.conn_lock:
             if sock in self.connected_users:
                 self.connected_users.remove(sock)
                 # pending_keep_alive entry would be removed by the _keep_alive func
+                # mabye remove keep alive here
         with self.reg_lock:
             self.registered_user.remove_by_key(sock)
 
@@ -1145,11 +1211,13 @@ class SIPServer:
         Send data to a client over TCP. Close the connection on failure.
 
         :param sock: Socket to send data through
-        :type sock: socket.socket
+        :type sock: EncryptedSocket
         :param data: Byte data to be sent
         :type data: bytes
         """
-        if not send_sip_tcp(sock, data):
+        enc_data = sock.encrypt(data)
+        # send encrypted
+        if not send_encrypted(sock, enc_data):
             print("couldnt send")
             self._close_connection(sock)
 
