@@ -25,6 +25,7 @@ KEEP_ALIVE_MSG = SIPMsgFactory.create_request(SIPMethod.OPTIONS, SIP_VERSION, "k
                                               "", 1)
 MAX_PASSES_META = 8000  # 8 kb
 MAX_PASSES_BODY = 1000
+KEEP_ALIVE_SECONDS = 30
 
 BANNED_IPS_FILE = "banned_ips.txt"
 
@@ -76,11 +77,6 @@ class Call:  # For both invite and register
     callee_socket: Optional[EncryptedSocket] = None
     caller_socket: Optional[EncryptedSocket] = None
     uri_other: Optional[str] = None
-
-@dataclass
-class EncryptionCreation:
-    client_socket: EncryptedSocket
-    created_time: datetime.datetime
 
 @dataclass
 class KeepAlive:
@@ -228,7 +224,7 @@ class SIPServer:
 
         # Connection management - con lock
         self.connected_users = []  # EncryptedSocket
-        self.pending_crypt = [] # sockets
+        self.pending_crypt = {} # {socket -> creation_time}
         self.pending_keep_alive = {}  # call-id -> KeepAlive
 
         # ip lock
@@ -277,7 +273,7 @@ class SIPServer:
             # Start server loop
             while self.running:
                 with self.conn_lock:
-                    readable, _, _ = select.select(self.pending_crypt + self.connected_users + [self.server_socket], [], [], 0.5)
+                    readable, _, _ = select.select(list(self.pending_crypt.keys()) + self.connected_users + [self.server_socket], [], [], 0.5)
                 with self.conn_lock:
                     for sock in readable:
                         if sock is self.server_socket:
@@ -310,7 +306,7 @@ class SIPServer:
 
                             # send rsa key
                             send_encrypted(client_sock, self.public_key)
-                            self.pending_crypt.append(client_sock)
+                            self.pending_crypt[client_sock] = datetime.datetime.now()
                             print(f"added client to pending auth at {addr}")
                         elif sock in self.pending_crypt:
                             # client sent aes key
@@ -323,7 +319,7 @@ class SIPServer:
                                 aes_key = self.rsa_crypt.decrypt(rsa_encrypted) # aes key is bytes obj
                                 encrypt_obj = AESCryptGCM(aes_key)
                                 self.connected_users.append(EncryptedSocket(sock, encrypt_obj))
-                                self.pending_crypt.remove(sock)
+                                del self.pending_crypt[sock]
 
                                 # send keep alive + add to keep alive queue
                         else:
@@ -1159,7 +1155,12 @@ class SIPServer:
                     self._send_to_client(sock, str(msg).encode())
                     keep_alive_obj = KeepAlive(call_id, 1, sock)
                     self.pending_keep_alive[call_id] = keep_alive_obj
-            time.sleep(30)
+
+            # now add pending_auth_remove - will need to be it's own thread once i change func into sleep queue
+            for sock, creation_time in self.pending_crypt.items():
+                if (datetime.datetime.now() - creation_time).total_seconds() > KEEP_ALIVE_SECONDS:
+                    del self.pending_crypt[sock]
+            time.sleep(KEEP_ALIVE_SECONDS)
 
     def _close_connection(self, sock):
         """
