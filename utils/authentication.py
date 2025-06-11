@@ -25,7 +25,7 @@ class AuthService:
         timestamp = int(time.time())  # Current UNIX timestamp
         return f"{timestamp}-{random_part}"  # Combine timestamp and random part
 
-    def _calculate_ha1(self, username, realm, password):
+    def calculate_ha1(self, username, password, realm=None):
         """
         Calculate HA1 hash using the formula: MD5(username:realm:password).
 
@@ -41,6 +41,8 @@ class AuthService:
         :return: HA1 hash
         :rtype: str
         """
+        if not realm:
+            realm = self.name
         # in real imp use database connector to get the ha1
         return hashlib.md5(f"{username}:{realm}:{password}".encode()).hexdigest()
 

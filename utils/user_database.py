@@ -3,6 +3,7 @@ import re
 import sqlite3
 import string
 from typing import Optional
+# from authentication import AuthService
 
 NUM_OF_AQ = 5
 LOCK = Semaphore(NUM_OF_AQ)
@@ -22,7 +23,8 @@ class UserDatabase:
 
     def is_valid_password(self, password: str) -> bool:
         """Disallow control characters and enforce length (8–64 chars)."""
-        if not (6 <= len(password) <= 16):
+        if not (6 <= len(password) <= 32):
+            print("too long")
             return False
         allowed_chars = set(string.printable) - set(string.whitespace[:6])  # no \n \r \t etc.
         return all(c in allowed_chars for c in password)
@@ -116,5 +118,10 @@ class UserDatabase:
 
 if __name__ == '__main__':
     my_db = UserDatabase()
+    # auth = AuthService("myserver")
+    # ha1 = auth.calculate_ha1('ts2', '123456')
+    # print(ha1)
+    # print(len(ha1))
+    # print(my_db.is_valid_password(ha1))
     # print(my_db.add_user('user6', '122345453'))
-    print(my_db.add_user('ts2', '123456'))
+    print(my_db.add_user('ts2', ha1))

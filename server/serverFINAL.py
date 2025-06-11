@@ -617,10 +617,10 @@ class SIPServer:
                                                                                SERVER_URI)
                         self._send_to_client(sock, str(error_msg).encode())
                     else:
-                        password = self.user_db.get_password(uri_sender)
+                        password = self.user_db.get_password(uri_sender) # this is the ha1
                         answer_now = self.authority.calculate_hash_auth(
                                                                         password,
-                                                                        SIPMethod.REGISTER,
+                                                                        SIPMethod.REGISTER.value,
                                                                         auth_header_parsed['nonce'],
                                                                         auth_header_parsed['realm'])
                         # verify in server
@@ -1034,7 +1034,7 @@ class SIPServer:
                         print(f"inactive call: {call}")
                         end_msg = SIPMsgFactory.create_response(SIPStatusCode.DOES_NOT_EXIST_ANYWHERE, SIP_VERSION,
                                                                 SIPMethod.OPTIONS,
-                                                                SIPMethod.INVITE, 'none', SERVER_URI, call.call_id)
+                                                                call.last_used_cseq_num, 'none', SERVER_URI, call.call_id)
                         send_sock = call.caller_socket
                         if self.registered_user.get_by_key(send_sock):
                             end_msg.set_header('to', self.registered_user.get_by_key(send_sock).uri)

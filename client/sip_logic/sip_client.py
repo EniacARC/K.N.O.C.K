@@ -209,8 +209,9 @@ class SIPHandler(ControllerAware):
             self.clear_call("can't support hash algorithm")
             return
 
+        ha1 = self.auth_authority.calculate_ha1(self.uri, self.password)
         response = self.auth_authority.calculate_hash_auth(
-            self.password, method.value, fields['nonce'], fields['realm'])
+            ha1, method.value, fields['nonce'], fields['realm'])
 
         auth_header = f'digest username="{self.uri}", realm="{fields["realm"]}", ' \
                       f'nonce="{fields["nonce"]}", response="{response}"'

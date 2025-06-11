@@ -470,7 +470,7 @@ class SIPMsgFactory:
                 Creates a SIPResponse object based on a given SIPRequest.
 
                 :param request: The original SIPRequest to respond to.
-                :type request: SIPRequest
+                :type request: SIPMsg
 
                 :param status_code: The response status code (e.g., 200, 404).
                 :type status_code: int
