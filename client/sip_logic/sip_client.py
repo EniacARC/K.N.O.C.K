@@ -13,7 +13,7 @@ from utils.sdp_class import *
 from client.mediator_connect import *
 from utils.encryption.rsa import RSACrypt
 from utils.encryption.aes import AESCryptGCM
-SERVER_IP = '127.0.0.1'
+SERVER_IP = '172.16.1.109'
 SERVER_PORT = 4552
 SIP_VERSION = "SIP/2.0"
 SERVER_URI = "myserver"
@@ -190,7 +190,7 @@ class SIPHandler(ControllerAware):
 
         self.controller.set_recv_ports(video=True, audio=True)
 
-        local_sdp = SDP(0, '127.0.0.1', sdp_recv.session_id,
+        local_sdp = SDP(0, socket.gethostbyname(socket.gethostname()), sdp_recv.session_id,
                         video_port=self.controller.get_recv_video_port(), video_format='h.264',
                         audio_port=self.controller.get_recv_audio_port(), audio_format='acc')
 
@@ -409,7 +409,7 @@ class SIPHandler(ControllerAware):
         session_id = SDP.generate_session_id()
 
         self.controller.set_recv_ports(video=True, audio=True)
-        sdp_body = SDP(0, '127.0.0.1', session_id,
+        sdp_body = SDP(0, socket.gethostbyname(socket.gethostname()), session_id,
                        video_port=self.controller.get_recv_video_port(), video_format='h.264',
                        audio_port=self.controller.get_recv_audio_port(), audio_format='acc')
 

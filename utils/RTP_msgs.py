@@ -63,7 +63,7 @@ class RTPPacket:
         self.extension = extension
         self.marker = marker
         self.payload_type = payload_type
-        self.sequence_number = sequence_number
+        self.sequence_number = sequence_number % 0x10000
         self.ssrc = ssrc
         self.timestamp = self.timestamp = timestamp if timestamp is not None else int(time.time() * 1000) & 0xFFFFFFF
 

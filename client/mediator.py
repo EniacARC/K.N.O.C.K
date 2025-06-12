@@ -43,10 +43,10 @@ class Mediator(MediatorInterface):
 
     def start(self, screen_name):
         if self.gui and self.sip_client and self.rtp_manager and self.signup_client:
-            self.sip_client.connect()
-            self.sip_client.start()
-            self.running = True
-            self.gui.start(screen_name)
+            if self.sip_client.connect():
+                self.sip_client.start()
+                self.running = True
+                self.gui.start(screen_name)
 
     def stop(self):
         self.gui.stop()

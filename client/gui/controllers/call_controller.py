@@ -179,3 +179,6 @@ class CallController(BaseController):
         """
         self.audio_out.write(frame)
 
+    def on_destroy(self):
+        self.running = False
+
