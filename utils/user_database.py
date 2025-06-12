@@ -46,6 +46,8 @@ class UserDatabase:
             self.lock.release()
 
     def add_user(self, username: str, password: str) -> tuple[bool, str]:
+        print(username)
+        print(password)
         return_bool = False
         return_msg = "invalid username or password"
         # write access
@@ -53,7 +55,7 @@ class UserDatabase:
             self.lock.acquire()
 
         try:
-            if self.is_valid_username(username) and self.is_valid_password(password):
+            if self.is_valid_username(username) and self.is_valid_password(password) and not self.user_exists(username):
                 with sqlite3.connect(self.db_path) as conn:
                     cursor = conn.cursor()
                     cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
@@ -124,4 +126,4 @@ if __name__ == '__main__':
     # print(len(ha1))
     # print(my_db.is_valid_password(ha1))
     # print(my_db.add_user('user6', '122345453'))
-    print(my_db.add_user('ts2', ha1))
+    print(my_db.add_user('ts2', '231rwr324'))
