@@ -107,7 +107,6 @@ def _send_video_process(send_ip, send_video, running_event):
 
     :returns: None
     """
-    video_io = VideoInput()
     encoder = VideoEncoder()
 
     # Hard coding fps for now
@@ -115,6 +114,11 @@ def _send_video_process(send_ip, send_video, running_event):
     sender = RTPHandler(send_ip, send_port=send_video)
     sender.start()
 
+    try:
+        video_io = VideoInput()
+    except Exception:
+        sender.stop()
+        return
     try:
         while running_event.is_set():
             start_time = time.time()
