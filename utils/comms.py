@@ -207,21 +207,24 @@ def recv_encrypted(sock):
     """
     data_len_bytes = b''
     data = b''
-    while len(data_len_bytes) < INT_SIZE:
-        buf = sock.recv(INT_SIZE - len(data_len_bytes))
-        if buf == b'':
-            data_len_bytes = b''
-            break
-        data_len_bytes += buf
-    if data_len_bytes != b'':
-        data_len = socket.htonl(struct.unpack(PACK_SIGN, data_len_bytes)[0])
-
-        while len(data) < data_len:
-            buf = sock.recv(data_len - len(data))
+    try:
+        while len(data_len_bytes) < INT_SIZE:
+            buf = sock.recv(INT_SIZE - len(data_len_bytes))
             if buf == b'':
-                data = b''
+                data_len_bytes = b''
                 break
-            data += buf
+            data_len_bytes += buf
+        if data_len_bytes != b'':
+            data_len = socket.htonl(struct.unpack(PACK_SIGN, data_len_bytes)[0])
+
+            while len(data) < data_len:
+                buf = sock.recv(data_len - len(data))
+                if buf == b'':
+                    data = b''
+                    break
+                data += buf
+    except socket.error:
+        data = b''
 
     return data
 

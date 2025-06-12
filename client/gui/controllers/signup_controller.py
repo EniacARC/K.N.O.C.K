@@ -1,4 +1,6 @@
 from .base_controller import BaseController
+from tkinter import messagebox
+
 
 class SignupController(BaseController):
     def __init__(self, app_controller, view, model):
@@ -25,6 +27,7 @@ class SignupController(BaseController):
 
     def signup_answer(self, success):
         if success == '':
+            messagebox.showinfo(title="signup popup", message="Signup successful!")
             self.app.show_screen("login")
         else:
             # Show error with return screen "signup"

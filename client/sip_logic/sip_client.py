@@ -48,7 +48,7 @@ class SIPHandler(ControllerAware):
 
         self.aes_obj = AESCryptGCM()
 
-        self.auth_authority = AuthService(SERVER_URI)
+        # self.auth_authority = AuthService(SERVER_URI)
 
     def connect(self):
         try:
@@ -77,21 +77,23 @@ class SIPHandler(ControllerAware):
             enc_data = rsa.encrypt(self.aes_obj.export_key())
             print(f"encoded: {enc_data}")
             send_encrypted(self.socket, enc_data)
+            print("sent!")
             return True
         return False
 
     def start(self):
+        print("starting!")
         threading.Thread(target=self._main_loop).start()
 
     def _main_loop(self):
         if not self.connected:
             return
-        while self.connected:
-            print(self.connected)
-            try:
+        try:
+            while self.connected:
                 readable, _, _ = select.select([self.socket], [], [], 0.5)
                 for sock in readable:
                     msg_enc = recv_encrypted(sock)
+                    print(msg_enc)
                     if msg_enc != b'':
                         msg_raw = self.aes_obj.decrypt(msg_enc).decode()
                         msg = SIPMsgFactory.parse(msg_raw)
@@ -107,13 +109,13 @@ class SIPHandler(ControllerAware):
                                 pass # this is for keep alive
                             continue
 
-                        self.connected = False
-            except Exception as err:
-                print("ERROR")
-                print(err)
-            finally:
-                print("closing")
-                self.controller.stop()
+                    self.connected = False
+        except Exception as err:
+            print("ERROR")
+            print(err)
+        finally:
+            print("closing")
+            self.controller.stop()
 
 
 
@@ -241,8 +243,8 @@ class SIPHandler(ControllerAware):
             self.clear_call("can't support hash algorithm")
             return
 
-        ha1 = self.auth_authority.calculate_ha1(self.uri, self.password)
-        response = self.auth_authority.calculate_hash_auth(
+        ha1 = calculate_ha1(self.uri, self.password, SERVER_URI)
+        response = calculate_hash_auth(
             ha1, method.value, fields['nonce'], fields['realm'])
 
         auth_header = f'digest username="{self.uri}", realm="{fields["realm"]}", ' \

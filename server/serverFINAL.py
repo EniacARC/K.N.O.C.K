@@ -19,6 +19,7 @@ MAX_WORKERS = 10
 SIP_VERSION = "SIP/2.0"
 SERVER_URI = "myserver"
 SERVER_IP = '127.0.0.1'  # need to find out using sbc
+DB_PATH = '../utils/users.db'
 CALL_IDLE_LIMIT = 15
 REGISTER_LIMIT = 60
 REQUIRED_HEADERS = {'to', 'from', 'call-id', 'cseq'}  #'content-length'
@@ -206,8 +207,8 @@ class SIPServer:
             thread_name_prefix="sip_worker"
         )
 
-        self.user_db = UserDatabase('../utils/users.db')
-        self.authority = AuthService(SERVER_URI)
+        self.user_db = UserDatabase(DB_PATH)
+        # self.authority = AuthService(SERVER_URI)
 
         # Locks - RLock for multiple acquisitions in the same thread
         self.reg_lock = threading.RLock()  # Lock for adding users to the registered_users dict
@@ -350,6 +351,7 @@ class SIPServer:
 
                             print("got msg")
                             msg_encrypted = recv_encrypted(sock)
+                            print(msg_encrypted)
                             if msg_encrypted != b'':
                                 print(f"msg enc: {msg_encrypted}")
                                 print(f"decrypt with key: {sock.encrypt_obj.key}")
@@ -687,7 +689,7 @@ class SIPServer:
                         self._send_to_client(sock, str(error_msg).encode())
                     else:
                         password = self.user_db.get_password(uri_sender) # this is the ha1
-                        answer_now = self.authority.calculate_hash_auth(
+                        answer_now = calculate_hash_auth(
                                                                         password,
                                                                         SIPMethod.REGISTER.value,
                                                                         auth_header_parsed['nonce'],
@@ -831,7 +833,7 @@ class SIPServer:
                     self._send_to_client(sock, str(error_msg).encode())
                 else:
                     password = self.user_db.get_password(uri)
-                    answer_now = self.authority.calculate_hash_auth(
+                    answer_now = calculate_hash_auth(
                                                                     password,
                                                                     SIPMethod.REGISTER.value,
                                                                     auth_header_parsed['nonce'],
@@ -923,11 +925,13 @@ class SIPServer:
         # Store challenge
         with self.call_lock:
             # Generate nonce
-            nonce = AuthService.generate_nonce().lower()
+            nonce = generate_nonce().lower()
+            print(nonce)
             password = self.user_db.get_password(uri)
+            print(password)
             # Create challenge
             challenge = AuthChallenge(
-                answer=self.authority.calculate_hash_auth(password, method, nonce, SERVER_URI),
+                answer=calculate_hash_auth(password, method, nonce, SERVER_URI),
                 created_time=datetime.datetime.now()
             )
             self.pending_auth[call_id] = challenge
