@@ -21,7 +21,7 @@ SERVER_URI = "myserver"
 SERVER_IP = '127.0.0.1'  # need to find out using sbc
 DB_PATH = '../utils/users.db'
 CALL_IDLE_LIMIT = 15
-REGISTER_LIMIT = 60
+REGISTER_LIMIT = 3600
 REQUIRED_HEADERS = {'to', 'from', 'call-id', 'cseq'}  #'content-length'
 KEEP_ALIVE_MSG = SIPMsgFactory.create_request(SIPMethod.OPTIONS, SIP_VERSION, "keep-alive", "keep-alive",
                                               "", 1)
@@ -623,7 +623,7 @@ class SIPServer:
 
         # verify uri of the sender is real
         if not self.user_db.user_exists(uri_sender):
-
+            print("didnt find user...")
             error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_FOUND, SERVER_URI)
             self._send_to_client(sock, str(error_msg).encode())
             return
@@ -663,6 +663,7 @@ class SIPServer:
             with self.reg_lock:
                 user_recv = self.registered_user.get_by_val(uri_recv)
                 if not user_recv:
+                    print("user removes from register")
                     # can't contact callee
                     error_msg = SIPMsgFactory.create_response_from_request(req, SIPStatusCode.NOT_FOUND, SERVER_URI)
                     self._send_to_client(sock, str(error_msg).encode())
@@ -1096,8 +1097,9 @@ class SIPServer:
         while self.running:
             """Removes registrations that are past expiration"""
             with self.reg_lock:
-                for uri, user in self.registered_user.val_to_obj.items():
+                for uri, user in list(self.registered_user.val_to_obj.items()):
                     if (datetime.datetime.now() - user.registration_time).total_seconds() >= user.expires:
+                        print("expired reg")
                         self.registered_user.remove_by_val(uri)
             time.sleep(30)
 
@@ -1105,7 +1107,7 @@ class SIPServer:
         while self.running:
             """Removes calls with sockets that are inactive"""
             with self.call_lock:
-                for call_id, call in self.active_calls.items():
+                for call_id, call in list(self.active_calls.items()):
                     if (datetime.datetime.now() - call.last_active).total_seconds() >= CALL_IDLE_LIMIT and call.call_state != SIPCallState.IN_CALL:
 
                         # send to the clients that the call was terminated if active
@@ -1204,9 +1206,12 @@ class SIPServer:
             # Remove a call that the sock is in. If there is another UAC send them an error msg
             for call_id, call in list(self.active_calls.items()):
                 if call.caller_socket is sock or call.callee_socket is sock:
+                    print("in a call")
                     if call.call_type == SIPCallType.INVITE:
                         send_sock = call.caller_socket if call.callee_socket == sock else call.callee_socket
+                        print(send_sock)
                         if send_sock: # if there was another side (maybe different case for bye?)
+
                             with self.reg_lock:
                                 if self.registered_user.get_by_key(send_sock):
                                     to_uri = self.registered_user.get_by_key(send_sock).uri
