@@ -3,8 +3,6 @@ import struct
 import threading
 import time
 
-from encryption.aes import AESCryptGCM
-
 from utils.sip_msgs import *
 
 INT_SIZE = 4

@@ -6,11 +6,13 @@ from typing import Optional
 
 import select
 
-from utils.comms import receive_tcp_sip, send_sip_tcp
+from utils.comms import recv_encrypted, send_encrypted
 from utils.sip_msgs import *
 from utils.authentication import *
 from utils.sdp_class import *
 from client.mediator_connect import *
+from utils.encryption.rsa import RSACrypt
+from utils.encryption.aes import AESCryptGCM
 SERVER_IP = '127.0.0.1'
 SERVER_PORT = 4552
 SIP_VERSION = "SIP/2.0"
@@ -44,6 +46,8 @@ class SIPHandler(ControllerAware):
         self.call = None
         self.logged_in = False
 
+        self.aes_obj = AESCryptGCM()
+
         self.auth_authority = AuthService(SERVER_URI)
 
     def connect(self):
@@ -52,7 +56,7 @@ class SIPHandler(ControllerAware):
             self.socket.connect((self.server_ip, self.server_port))
             print(f"Connected to server {self.server_ip}:{self.server_port}")
             self.connected = True
-            return True
+            return self.encryption_pipeline()
         except socket.error as e:
             print(f"Connection failed: {e}")
             return False
@@ -63,6 +67,19 @@ class SIPHandler(ControllerAware):
             self.socket.close()
             print("Disconnected from server")
 
+    def encryption_pipeline(self):
+        rsa = RSACrypt()
+        rsa_key = recv_encrypted(self.socket)
+        if rsa_key != b'':
+            print(rsa_key)
+            rsa.import_public_key(rsa_key)
+            print(f"sending key: {self.aes_obj.export_key()}")
+            enc_data = rsa.encrypt(self.aes_obj.export_key())
+            print(f"encoded: {enc_data}")
+            send_encrypted(self.socket, enc_data)
+            return True
+        return False
+
     def start(self):
         threading.Thread(target=self._main_loop).start()
 
@@ -70,22 +87,35 @@ class SIPHandler(ControllerAware):
         if not self.connected:
             return
         while self.connected:
-            readable, _, _ = select.select([self.socket], [], [], 0.5)
-            for sock in readable:
-                msg = receive_tcp_sip(sock, MAX_PASSES_META, MAX_PASSES_BODY)
-                print(f"{self.uri} recvd: {msg}")
+            print(self.connected)
+            try:
+                readable, _, _ = select.select([self.socket], [], [], 0.5)
+                for sock in readable:
+                    msg_enc = recv_encrypted(sock)
+                    if msg_enc != b'':
+                        msg_raw = self.aes_obj.decrypt(msg_enc).decode()
+                        msg = SIPMsgFactory.parse(msg_raw)
+                        print(f"{self.uri} recvd: {msg}")
 
-                if msg is not None:
-                    if isinstance(msg, SIPRequest):
-                        self._handle_request(msg)
-                    elif self.call:
-                        if msg.get_header('call-id') == self.call.call_id:
-                            self.process_response(msg)
-                    else:
-                        pass # this is for keep alive
-                else:
-                    print("hello")
-                    self.connected = False # end all
+                        if msg is not None:
+                            if isinstance(msg, SIPRequest):
+                                self._handle_request(msg)
+                            elif self.call:
+                                if msg.get_header('call-id') == self.call.call_id:
+                                    self.process_response(msg)
+                            else:
+                                pass # this is for keep alive
+                            continue
+
+                        self.connected = False
+            except Exception as err:
+                print("ERROR")
+                print(err)
+            finally:
+                print("closing")
+                self.controller.stop()
+
+
 
     def _handle_request(self, msg):
         method = msg.method
@@ -100,12 +130,12 @@ class SIPHandler(ControllerAware):
     def _handle_options(self, msg):
         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri)
         print(f"sending: {res}")
-        send_sip_tcp(self.socket, str(res).encode())
+        self.send_encrypted(self.socket, str(res).encode())
 
     def _handle_invite(self, msg):
         if self.call:
             res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.DECLINE, self.uri)
-            send_sip_tcp(self.socket, str(res).encode())
+            self.send_encrypted(self.socket, str(res).encode())
         else:
             self.call = Call(
                 call_type=SIPCallType.INVITE,
@@ -141,7 +171,7 @@ class SIPHandler(ControllerAware):
             self._handle_call_acceptance()
         else:
             res = SIPMsgFactory.create_response_from_request(self.call.call_data, SIPStatusCode.DECLINE, self.uri)
-            send_sip_tcp(self.socket, str(res).encode())
+            self.send_encrypted(self.socket, str(res).encode())
             self.clear_call()
 
 
@@ -164,23 +194,25 @@ class SIPHandler(ControllerAware):
 
         res = SIPMsgFactory.create_response_from_request(
             self.call.call_data, SIPStatusCode.OK, self.uri, body=str(local_sdp))
-        send_sip_tcp(self.socket, str(res).encode())
+        self.send_encrypted(self.socket, str(res).encode())
         self.call.call_data = None
 
     def process_invite(self, msg):
         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.RINGING, self.uri)
-        if send_sip_tcp(self.socket, str(res).encode()):
+        if self.send_encrypted(self.socket, str(res).encode()):
+            print("passed send")
             self.call.call_data = msg
             # send to gui
+            print("asking")
             self.controller.ask_for_call_answer(msg.get_header('from'))
 
     def process_cancel(self, msg):
         if self.call.call_state == SIPCallState.RINGING:
             self.call.last_used_cseq_num += 1
             res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri)
-            if send_sip_tcp(self.socket, str(res).encode()):
+            if self.send_encrypted(self.socket, str(res).encode()):
                 res.status_code = SIPStatusCode.REQUEST_TERMINATED
-                if send_sip_tcp(self.socket, str(res).encode()):
+                if self.send_encrypted(self.socket, str(res).encode()):
                     self.call.call_state = SIPCallState.TRYING_CANCEL
 
     def process_ack(self, msg):
@@ -196,7 +228,7 @@ class SIPHandler(ControllerAware):
 
         res = SIPMsgFactory.create_response_from_request(msg, SIPStatusCode.OK, self.uri)
         print(f"sending ok: {res}")
-        send_sip_tcp(self.socket, str(res).encode())
+        self.send_encrypted(self.socket, str(res).encode())
         self.clear_call("call ended")
 
     def send_auth_response(self, msg):
@@ -219,7 +251,7 @@ class SIPHandler(ControllerAware):
         req = SIPMsgFactory.create_request(method, SIP_VERSION, msg.get_header('from'),
                                            msg.get_header('to'), self.call.call_id, self.call.last_used_cseq_num,
                                            {'www-authenticate': auth_header})
-        send_sip_tcp(self.socket, str(req).encode())
+        self.send_encrypted(self.socket, str(req).encode())
 
     def _parse_auth_request(self, header):
         if not header or not header.lower().startswith("digest "):
@@ -306,7 +338,7 @@ class SIPHandler(ControllerAware):
                         )
 
                         print(f"acking: {ack}")
-                        if send_sip_tcp(self.socket, str(ack).encode()):
+                        if self.send_encrypted(self.socket, str(ack).encode()):
                             self.call_state = SIPCallState.IN_CALL
                             print("start stream - send")
                             self.controller.start_stream()
@@ -329,7 +361,7 @@ class SIPHandler(ControllerAware):
                 self.call.call_id,
                 cseq
             )
-            send_sip_tcp(self.socket, str(ack).encode())
+            self.send_encrypted(self.socket, str(ack).encode())
             self.clear_call()
             return
 
@@ -360,7 +392,7 @@ class SIPHandler(ControllerAware):
 
         req = SIPMsgFactory.create_request(SIPMethod.REGISTER, SIP_VERSION, SERVER_URI, self.uri, self.call.call_id, self.call.last_used_cseq_num)
         print(req)
-        send_sip_tcp(self.socket, str(req).encode())
+        self.send_encrypted(self.socket, str(req).encode())
 
     def invite(self, uri):
 
@@ -380,7 +412,7 @@ class SIPHandler(ControllerAware):
                        audio_port=self.controller.get_recv_audio_port(), audio_format='acc')
 
         req = SIPMsgFactory.create_request(SIPMethod.INVITE, SIP_VERSION, uri, self.uri, self.call.call_id, self.call.last_used_cseq_num, body=str(sdp_body))
-        send_sip_tcp(self.socket, str(req).encode())
+        self.send_encrypted(self.socket, str(req).encode())
 
     def bye(self):
         self.call.last_used_cseq_num += 1
@@ -392,7 +424,7 @@ class SIPHandler(ControllerAware):
                                            self.call.call_id,
                                            self.call.last_used_cseq_num)
         self.call.call_state = SIPCallState.WAITING_BYE
-        send_sip_tcp(self.socket, str(req).encode())
+        self.send_encrypted(self.socket, str(req).encode())
         print("sending bye")
         print(req)
 
@@ -405,12 +437,18 @@ class SIPHandler(ControllerAware):
                                            self.call.call_id,
                                            self.call.last_used_cseq_num)
         self.call.call_state = SIPCallState.INIT_CANCEL
-        send_sip_tcp(self.socket, str(req).encode())
+        self.send_encrypted(self.socket, str(req).encode())
 
     def clear_call(self, error_msg=''):
         print(f"Terminating call {self.call.call_id}")
         self.call = None
         self.controller.clear(error_msg)
+        
+    def send_encrypted(self, sock, data):
+        enc_data = self.aes_obj.encrypt(data)
+        print(f"encrypt with key: {self.aes_obj.key}")
+        print(f"sending: {enc_data}")
+        return send_encrypted(sock, enc_data)
 
 # if __name__ == '__main__':
 #     cli = SIPHandler('user1', '3433')

@@ -2,6 +2,7 @@ import concurrent.futures
 from collections import defaultdict
 
 from utils.authentication import *
+from utils.encryption.aes import AESCryptGCM
 from utils.user_database import UserDatabase
 import datetime
 import threading
@@ -47,12 +48,12 @@ class EncryptedSocket:
         return self.socket.close()
 
     def __getattr__(self, name):
-        return getattr(self.sock, name)
+        return getattr(self.socket, name)
 
     def encrypt(self, data):
         return self.encrypt_obj.encrypt(data)
     def decrypt(self, data):
-        return self.decrypt(data)
+        return self.encrypt_obj.decrypt(data)
 
 
 @dataclass
@@ -305,6 +306,7 @@ class SIPServer:
                             # self.connected_users.append(client_sock)
 
                             # send rsa key
+                            print(f"sending: {self.public_key}")
                             send_encrypted(client_sock, self.public_key)
                             self.pending_crypt[client_sock] = datetime.datetime.now()
                             print(f"added client to pending auth at {addr}")
@@ -315,11 +317,14 @@ class SIPServer:
                             # add to connected_users
                             # send keep alive msg + add to keep alive queue
                             rsa_encrypted = recv_encrypted(sock)
-                            if aes_key != b'':
+                            if rsa_encrypted != b'':
+                                print(f"encrypted: {rsa_encrypted}")
                                 aes_key = self.rsa_crypt.decrypt(rsa_encrypted) # aes key is bytes obj
+                                print(f"decrypted: {aes_key}")
                                 encrypt_obj = AESCryptGCM(aes_key)
                                 self.connected_users.append(EncryptedSocket(sock, encrypt_obj))
                                 del self.pending_crypt[sock]
+                                print("added user!")
 
                                 # send keep alive + add to keep alive queue
                         else:
@@ -343,11 +348,14 @@ class SIPServer:
                             # msg = parse_sip(decrypted_bytes)
                             # msg = receive_tcp_sip(sock, MAX_PASSES_META, MAX_PASSES_BODY)
 
-
+                            print("got msg")
                             msg_encrypted = recv_encrypted(sock)
                             if msg_encrypted != b'':
+                                print(f"msg enc: {msg_encrypted}")
+                                print(f"decrypt with key: {sock.encrypt_obj.key}")
                                 msg_raw = sock.decrypt(msg_encrypted).decode() # decrypt returns bytes so decode to get str
-                                msg = SIPMsgFactory.parse(msg_raw.decode())
+                                print(f"msg_raw is: {msg_raw}")
+                                msg = SIPMsgFactory.parse(msg_raw)
                                 print(f"got msg: {msg}")
                                 if msg:
                                     self.thread_pool.submit(self._worker_process_msg, sock, msg)
@@ -851,10 +859,15 @@ class SIPServer:
                                 registration_time=datetime.datetime.now(),
                                 expires=expires,
                             )
+                            print("hello?")
+                            print(f"crated user: {user}")
                             self.registered_user.add(user)  # overrides previous register if exists
+                            print(f"sending: {str(SIPMsgFactory.create_response_from_request(req, SIPStatusCode.OK,
+                                                                                                SERVER_URI))}")
                             self._send_to_client(sock,
                                                  str(SIPMsgFactory.create_response_from_request(req, SIPStatusCode.OK,
                                                                                                 SERVER_URI)).encode())
+                            print("send msg")
 
         else:
             print("none")
@@ -1216,6 +1229,7 @@ class SIPServer:
         :param data: Byte data to be sent
         :type data: bytes
         """
+        print(f"sending: {data}")
         enc_data = sock.encrypt(data)
         # send encrypted
         if not send_encrypted(sock, enc_data):
