@@ -7,7 +7,7 @@ from utils.encryption.aes import AESCryptGCM
 from utils.encryption.rsa import RSACrypt
 
 SERVER_URI = "myserver"
-SERVER_IP = '172.16.1.109'
+SERVER_IP = '127.0.0.1'
 SERVER_PORT = 2433
 
 SUCCESS_RESPONSE = "SIGNUP"

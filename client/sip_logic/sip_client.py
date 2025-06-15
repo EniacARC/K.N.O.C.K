@@ -13,7 +13,7 @@ from utils.sdp_class import *
 from client.mediator_connect import *
 from utils.encryption.rsa import RSACrypt
 from utils.encryption.aes import AESCryptGCM
-SERVER_IP = '172.16.1.109'
+SERVER_IP = '127.0.0.1'
 SERVER_PORT = 4552
 SIP_VERSION = "SIP/2.0"
 SERVER_URI = "myserver"
