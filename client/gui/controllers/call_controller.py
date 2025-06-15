@@ -148,6 +148,7 @@ class CallController(BaseController):
         self.app.controller.end_call_request()
 
     def temp_play_video(self, frame):
+        print(f"Received video frame of size: {frame.shape}")
         """
         Display a video frame in the video UI component.
 
